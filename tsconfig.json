@@ -1,0 +1,45 @@
+{
+    "compilerOptions": {
+      // project options
+      "module": "ES2020", // chrome requires this 
+      "lib": [
+        "ESNext",
+        "dom",
+        "ES2015"
+      ], // specifies which default set of type definitions to use ("DOM", "ES6", etc)
+      "outDir": "build", // .js (as well as .d.ts, .js.map, etc.) files will be emitted into this directory.,
+      "removeComments": true, // Strips all comments from TypeScript files when converting into JavaScript- you rarely read compiled code so this saves space
+      "target": "ES6", // Target environment. Most modern browsers support ES6, but you may want to set it to newer or older. (defaults to ES3)
+  
+      // Module resolution
+      "baseUrl": "./", // Lets you set a base directory to resolve non-absolute module names.
+      "esModuleInterop": true, // fixes some issues TS originally had with the ES6 spec where TypeScript treats CommonJS/AMD/UMD modules similar to ES6 module
+      "moduleResolution": "node", // Pretty much always node for modern JS. Other option is "classic"
+      "paths": {}, // A series of entries which re-map imports to lookup locations relative to the baseUrl
+  
+      // Source Map
+      "sourceMap": false, // disables the use of source maps for debuggers and error reporting etc
+      //"sourceRoot": "/", // Specify the location where a debugger should locate TypeScript files instead of relative source locations.
+  
+      // Strict Checks
+      "strict": true /* Enable all strict type-checking options. */,
+
+      /* Strict Type-Checking Options */
+      "noImplicitAny": true /* Raise error on expressions and declarations with an implied 'any' type. */,
+      "strictNullChecks": true /* Enable strict null checks. */,
+      "strictFunctionTypes": true /* Enable strict checking of function types. */,
+      "strictPropertyInitialization": true /* Enable strict checking of property initialization in classes. */,
+      "noImplicitThis": true /* Raise error on 'this' expressions with an implied 'any' type. */,
+      "alwaysStrict": true /* Parse in strict mode and emit "use strict" for each source file. */,
+      "allowUnreachableCode": false, // pick up dead code paths
+      
+      // Linter Checks
+      "noImplicitReturns": true,
+      "noUnusedLocals": true, // Report errors on unused local variables.
+      "noUnusedParameters": true // Report errors on unused parameters in functions
+    },
+    "include": ["./src/*.ts", "./src/crawlers/*.ts", "index.d.ts"],
+    "exclude": [
+      "node_modules/**/*"
+    ]
+  }

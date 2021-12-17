@@ -1,0 +1,8 @@
+build/
+node_modules/
+keys
+log.*
+*.zip
+.DS_Store
+*.hidden
+unused/

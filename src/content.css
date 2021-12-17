@@ -1,0 +1,20 @@
+.alpaca_border {
+    border-radius:7px;
+    padding: 1px 4px 1px 4px;
+    text-shadow: 0px 1px #eee;
+}
+.alpaca_cloudflare {
+    border:1px solid #FC7E2E;
+    color:#000;
+    background-color: #fed8c0;
+}
+.alpaca_non_cloudflare {
+    border:1px solid #2158b8;
+    color:#000;
+    background-color: #9bb9ed;
+}
+.alpaca_nxdomain {
+    border:1px solid #F00;
+    color:#000;
+    background-color: #ff9999;
+}

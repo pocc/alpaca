@@ -1,0 +1,26 @@
+{
+    "background": {
+        "scripts": ["background.js"],
+        "persistent": true
+    },
+    "icons": {
+        "16": "orangepaca_16.png",
+        "48": "orangepaca_48.png",
+        "128": "orangepaca_128.png"
+    },
+    "content_scripts": [
+        {
+            "run_at": "document_end",
+            "matches": ["*://*/*"],
+            "css": ["content.css"],
+            "js": ["content.js"]
+        }
+      ],
+    "web_accessible_resources": ["/*.png"],
+    "manifest_version": 2,
+    "permissions": ["activeTab", "webRequestBlocking", "webRequest", "webNavigation", "*://*/*"],
+    "author": "Ross Jacobs",
+    "name": "Alpaca",
+    "description": "Highlight IPs and domains with useful information",
+    "version": "0.0.1"
+  }

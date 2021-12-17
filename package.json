@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "@types/chrome": "0.0.157",
+    "dotenv": "^10.0.0",
+    "ip-cidr": "^3.0.4",
+    "ip-range-check": "^0.2.0",
+    "node-fetch": "^3.0.0",
+    "typescript": "^4.5.2"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^16.9.4"
+  }
+}
