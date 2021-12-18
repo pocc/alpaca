@@ -10,6 +10,31 @@ const getDate = () => new Date().toISOString().substr(0,10)
 
 const DEBUG = false;
 
+const RESERVED_IPV4 = {
+    "0.0.0.0/8": "Current network",
+    "10.0.0.0/8": "Private network    Used for local communications within a private network.",
+    "100.64.0.0/10": "Private network    Shared address space for communications between a service provider and its subscribers when using a carrier-grade NAT.",
+    "127.0.0.0/8": "Host    Used for loopback addresses to the local host.",
+    "169.254.0.0/16": "Subnet    Used for link-local addresses between two hosts on a single link when no IP address is otherwise specified, such as would have normally been retrieved from a DHCP server.",
+    "172.16.0.0/12": "Private network    Used for local communications within a private network.",
+    "192.0.0.0/24": "Private network    IETF Protocol Assignments.",
+    "192.0.2.0/24": "Documentation    Assigned as TEST-NET-1, documentation and examples.",
+    "192.88.99.0/24": "Internet    Reserved. Formerly used for IPv6 to IPv4 relay (included IPv6 address block 2002::/16).",
+    "192.168.0.0/16": "Private network    Used for local communications within a private network.",
+    "198.18.0.0/15": "Private network    Used for benchmark testing of inter-network communications between two separate subnets.",
+    "198.51.100.0/24": "Documentation    Assigned as TEST-NET-2, documentation and examples.",
+    "203.0.113.0/24": "Documentation    Assigned as TEST-NET-3, documentation and examples.",
+    "224.0.0.0/4": "Internet    In use for IP multicast.[11] (Former Class D network.)",
+    "233.252.0.0/24":"Documentation    Assigned as MCAST-TEST-NET, documentation and examples.",
+    "240.0.0.0/4": "Internet    Reserved for future use.[13] (Former Class E network.)",
+    "255.255.255.255/32": "Subnet    Reserved for the `limited broadcast` destination address."
+}
+
+const RESERVED_IPV6 = {
+    
+}
+
+
 // For a tab, record the last url matching the regex and the timestamp of when it was visited
 const EXTN_URL = chrome.runtime.getURL('')
 const formatLog = (requestID: string, msg: string, data: any) => {
@@ -35,7 +60,25 @@ browser.runtime.onInstalled.addListener(async () => {
         AWS_LIST[i.ipv6_prefix] = i.region
     }
     /*
-    maybe also get google cloud list?
+    Use CSS from https://sharkcoder.com/visual/shapes to make text more distinct
+
+    2px px border
+        orange | cloudflare
+        red | fastly
+        teal | cloudfront
+
+    1px dark green border
+        green | example.com, fe80::, ::, 169.254.x.x, private ip addresses
+
+    grey border 2px: cloud; white border 2px: company
+        blue1 | azure, similar color for microsoft
+        blue2 | gcp, google
+        blue3 | aws, amazon
+        blue4 | facebook
+        blue5 | apple
+    /*
+
+    /*
     const gcp_resp = await fetch('https://www.gstatic.com/ipranges/cloud.json')
     const gcp_text = await gcp_resp.text()
     const gcp_json = JSON.parse(gcp_text)
@@ -46,8 +89,6 @@ browser.runtime.onInstalled.addListener(async () => {
         GCP_LIST[i.ipv6_prefix] = i.region
     }
     const azure_resp = await fetch('https://www.microsoft.com/en-us/download/confirmation.aspx?id=56519')
-    fastly: 
-    cloudfront:
     */
 
     formatLog('0', 'Alpaca Chrome extension loaded with this number of AWS entries', Object.keys(AWS_LIST).length);

@@ -67,7 +67,12 @@ function IsIpv4InCidr(subsetIPStr: string, CidrNotationStr: string) {
     const [cidrIPStr, cidrMaskStr] = CidrNotationStr.split('/');
     let [IPAddrStr, IPAddrMaskStr] = subsetIPStr.split('/');
     IPAddrMaskStr = IPAddrMaskStr || cidrMaskStr // If only an IP address is provided, assume the cidr net's mask
-    return IPNumber(IPAddrStr, IPAddrMaskStr) === IPNumber(cidrIPStr, cidrMaskStr)
+    return IPNumber(IPAddrStr, IPAddrMaskStr) === IPNumber(cidrIPStr, cidrMaskStr) && cidrMaskStr <= IPAddrMaskStr
+}
+
+function IsIpv6InCidr(subsetIPStr: string, CidrNotationStr: string) {
+    // Very bad 
+    return subsetIPStr.substr(0,8) === CidrNotationStr.substr(0,8)
 }
 
 async function highlight_ips() {
@@ -78,7 +83,38 @@ async function highlight_ips() {
     LAST_URL = url
     // For text documents. Asked on SO about this: https://stackoverflow.com/questions/70358848
     if (document.contentType === 'text/html') {
-        await walk(document.body);
+        const acceptFn = (node: HTMLElement) => {
+            if (node.nodeType === Node.TEXT_NODE && node.textContent && node.textContent.match(ADDR_REGEX)) {
+                return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_SKIP;
+        }
+        const treeWalker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            { acceptNode: acceptFn},
+        );
+        let nodeList = [];
+        let currentNode = treeWalker.currentNode;
+        while(currentNode) {
+            nodeList.push(currentNode);
+            currentNode = treeWalker.nextNode() as Node;
+        }
+        nodeList.splice(0,1) // body is first element
+        for (let node of nodeList) {
+            if (!node.textContent) continue; // No point in replacing empty content
+            if (node.textContent.includes('alpaca_addr')) {
+                console.error("This should never happen (TM). Erroring to avoid recursion")
+            }
+            let parentNode = node.parentElement as HTMLElement;
+            const isHidden = window.getComputedStyle(parentNode).display === 'none';
+            const p_tagname = parentNode.tagName.toLowerCase();
+            let maybeAddr = node.nodeValue || '';
+            if(!p_tagname.includes("script") && p_tagname != 'svg' && p_tagname != 'textarea' && !isHidden) {
+                modify_page(maybeAddr, parentNode)
+            }
+        }
+    
     } else if (document.contentType === 'text/plain' || document.contentType === 'application/json') {
         // If it's a text document
         const parentNode = document.body.children[0] as HTMLElement
@@ -86,26 +122,8 @@ async function highlight_ips() {
     }
 }
 
-async function walk(node: HTMLElement) {
-    let child, next;
-    // 1 => Element;    9 => Document;    11 => Document Fragment
-    if (node.nodeType === 1 || node.nodeType === 9 || node.nodeType === 11) {
-        child = node.firstChild;
-        while (child) {
-            next = child.nextSibling;
-            walk(child as HTMLElement);
-            child = next;
-        }
-    } else if (node.nodeType === 3) {  // 3 => Text Node
-        const parentNode = node.parentNode as HTMLElement;
-        const isHidden = window.getComputedStyle(parentNode).display === 'none';
-        const p_tagname = parentNode.tagName.toLowerCase();
-        let maybeAddr = node.nodeValue || '';
-        if(!p_tagname.includes("script") && p_tagname != 'svg' && p_tagname != 'textarea' && !isHidden && maybeAddr.match(ADDR_REGEX) && !parentNode.classList.contains('alpaca_border')) {
-            modify_page(maybeAddr, parentNode)
-        }
-    }
-}
+// https://developer.mozilla.org/en-US/docs/Web/API/Document/createTreeWalker
+
 
 async function modify_page(maybeAddr: string, parentNode: HTMLElement) {
     const addr_matches = [... maybeAddr.matchAll(ADDR_REGEX)]
@@ -144,7 +162,7 @@ async function modify_page(maybeAddr: string, parentNode: HTMLElement) {
 function modify_addrs(ip_addrs: string[], domain: string, parentNode: HTMLElement, errMsg: string) {
     if (errMsg.length > 0 || ip_addrs.length === 0) { // If no IP address was returned
         const domainRe = new RegExp('(?:^|\\s)(' + domain + ')', 'g')
-        const nxdomainSpan = `<span class="alpaca_nxdomain alpaca_border" id="alpaca_${domain}" title="NXDOMAIN:${domain} not found">${domain}</span>`
+        const nxdomainSpan = `<span class="alpaca_nxdomain alpaca_addr" id="alpaca_${domain}" title="NXDOMAIN:${domain} not found">${domain}</span>`
         parentNode.innerHTML = parentNode.innerHTML.replace(domainRe, nxdomainSpan)
         console.log("Alpaca|", "❌", domain || '?', ip_addrs, "NXDOMAIN hostname not found")
         return;
@@ -162,35 +180,29 @@ function modify_addrs(ip_addrs: string[], domain: string, parentNode: HTMLElemen
     }
     let matchRe = new RegExp(match, 'g')
     for (const v4_addr of v4_match) {
-        let last_addr_replaced = highlight_IPv4(parentNode, v4_addr, ip_addrs, CF_IPV4_LIST, matchRe, match);
+        let last_addr_replaced = highlight_IP(parentNode, v4_addr, ip_addrs, CF_IPV4_LIST, matchRe, match, IsIpv4InCidr);
         addr_replaced = last_addr_replaced || addr_replaced
         if (!last_addr_replaced) {
             replaceNonCF(parentNode, v4_addr, ip_addrs, domain, matchRe, match)
         }
     }
     for (const v6_addr of v6_match) {
-        for (const v6_net of CF_IPV6_LIST) {
-            // Crude IPv6 matching because largest is a /29, so first 8 chars should match (first 28 bits)
-            if (v6_addr.substr(0,8) === v6_net.substr(0,8)) {
-                parentNode.innerHTML = parentNode.innerHTML.replace(matchRe, `<span class="alpaca_cloudflare alpaca_border" id="alpaca_${v6_addr} "title="${v6_addr} in CF ${v6_net}.\nAll: ${ip_addrs}">${match}</span>`);
-                addr_replaced = true;
-                break;
-            }
+        let last_addr_replaced = highlight_IP(parentNode, v6_addr, ip_addrs, CF_IPV6_LIST, matchRe, match, IsIpv6InCidr);
+        addr_replaced = last_addr_replaced || addr_replaced
+        if (!last_addr_replaced) {
+            replaceNonCF(parentNode, v6_addr, ip_addrs, domain, matchRe, match)
         }
     }
     const domain_str = domain || (v4_match && v4_match[0]) || (v6_match && v6_match[0]) || '?'
     if (addr_replaced)
         console.log("Alpaca|", "🟠", domain_str, ip_addrs, "in Cloudflare")
-    else if ((v4_match.length > 0 || v6_match.length > 0 && v6_match[0] !== '::' || domain)) {
-        replaceNonCF(parentNode, domain_str, ip_addrs, domain, matchRe, match)
-    }
 }
 
-function highlight_IPv4(parentNode: HTMLElement, ip_addr: string, ip_addrs: string[], CF_IPlist: string[], matchRe: RegExp, match: string): boolean {
+function highlight_IP(parentNode: HTMLElement, ip_addr: string, ip_addrs: string[], CF_IPlist: string[], matchRe: RegExp, match: string, ipSubnetFunc: any): boolean {
     for (const ip_subnet of CF_IPlist) {
-        if (IsIpv4InCidr(ip_addr, ip_subnet)) {
+        if (ipSubnetFunc(ip_addr, ip_subnet)) {
             const spanData = `id="alpaca_${ip_addr}" title="${ip_addr} in CF ${ip_subnet}.\nAll: ${ip_addrs}">${match}`;
-            const spanStr = `<span class="alpaca_cloudflare alpaca_border"${spanData}</span>`
+            const spanStr = `<span class="alpaca_cloudflare alpaca_addr"${spanData}</span>`
             parentNode.innerHTML = parentNode.innerHTML.replace(matchRe,  spanStr);
             return true;
         }
@@ -200,8 +212,6 @@ function highlight_IPv4(parentNode: HTMLElement, ip_addr: string, ip_addrs: stri
 
 function replaceNonCF(parentNode: HTMLElement, domain_str: string, ip_addrs: string[], domain: string, matchRe: RegExp, match: string) {
     // domain / IP address gets a white-grey background, so we know this extension is working
-    if (!parentNode.innerHTML.includes('alpaca_border')) {  // 
-        console.log("Alpaca|", "🟣", domain_str, ip_addrs, "not in Cloudflare")
-        parentNode.innerHTML = parentNode.innerHTML.replace(matchRe, `<span class="alpaca_non_cloudflare alpaca_border" id="alpaca_${domain}" title="${ip_addrs}\nNot proxied over Cloudflare">${match}</span>`);
-    }
+    console.log("Alpaca|", "🟣", domain_str, ip_addrs, "not in Cloudflare")
+    parentNode.innerHTML = parentNode.innerHTML.replace(matchRe, `<span class="alpaca_non_cloudflare alpaca_addr" id="alpaca_${domain}" title="${ip_addrs}\nNot proxied over Cloudflare">${match}</span>`);
 }
