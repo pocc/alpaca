@@ -8,7 +8,7 @@ let ACTIVE_URL = '';
 let DNS_CACHE: {[iso8601_date: string]: {[hostname: string]: string[]}} = {}  // Saving the DNS CACHE, per day
 const getDate = () => new Date().toISOString().substr(0,10)
 
-const DEBUG = false;
+const DEBUG = true;
 
 const RESERVED_IPV4 = {
     "0.0.0.0/8": "Current network",
@@ -31,7 +31,7 @@ const RESERVED_IPV4 = {
 }
 
 const RESERVED_IPV6 = {
-    
+
 }
 
 
@@ -184,31 +184,16 @@ export interface DNSQuery {
     Answer: Answer[];
 }
 
-function is_domain_valid(domain: string) {
-    let is_valid_domain = false
-    for (const tld of PUBLIC_SUFFIX_LIST) {
-        if (domain === tld) {
-            return false
-        }
-        if (domain.endsWith('.' + tld) && domain.length > tld.length + 1) {
-            is_valid_domain = true
-        }
-    }
-    return is_valid_domain;
-}
-
-async function DNSLookup(domain: string): Promise<string[] | []> {
+async function DNSLookup(domain: string): Promise<[string[], number, string]> {
     const A_TYPE = 1
     const AAAA_TYPE = 28
     const todaysDate = getDate()
-    if (!is_domain_valid(domain))
-        return ["invalid_domain"]
 
     DNS_CACHE[todaysDate] = DNS_CACHE[todaysDate] || {}
     if (DNS_CACHE[todaysDate][domain]) {
         if (DEBUG)
             console.log("Hit cache for", domain)
-        return DNS_CACHE[todaysDate][domain]
+        return [DNS_CACHE[todaysDate][domain], 0, '']
     } else {
         if (DEBUG)
             console.log("missed", DNS_CACHE)
@@ -221,20 +206,31 @@ async function DNSLookup(domain: string): Promise<string[] | []> {
         if (DEBUG)
             console.log("Alpaca| Sending IPv4 DNS query for", domain, "Got", respTextA)
         const respJSONA: DNSQuery = JSON.parse(respTextA);
-        let answers: Answer[];
-        if (respJSONA.Status === 0 && respJSONA.Answer) {
-            answers = respJSONA.Answer.filter((rr) => rr.type === A_TYPE)
+        let answers: Answer[] = [];
+        if (respJSONA.Status !== 0) {
+            return [[], respJSONA.Status, JSON.stringify(respJSONA.Answer)]
+        }
+        if (respJSONA.Answer) {
+            const ipv4_answers = respJSONA.Answer.filter((rr) => rr.type === A_TYPE)
+            answers = answers.concat(ipv4_answers)
         } else {
-            // if IPv4 fails, try IPv6
+            // get IPv6 addresses in addition to IPv4
             const respAAAA = await fetch(`https://cloudflare-dns.com/dns-query?name=${domain}&type=AAAA`, required_headers);
             const respTextAAAA = await respAAAA.text();
             if (DEBUG)
                 console.log("Alpaca| Sending IPv6 DNS query for", domain, "Got", respTextAAAA)
             const respJSONAAAA: DNSQuery = JSON.parse(respTextAAAA);
-            if (!respJSONAAAA.Answer) {
-                return [] // We've exhausted both IPv4 and IPv6 record requests
+            if (respJSONAAAA.Status !== 0) {
+                return [[], respJSONAAAA.Status, JSON.stringify(respJSONAAAA.Answer)]
             }
-            answers = respJSONAAAA.Answer.filter((rr) => rr.type === AAAA_TYPE)
+            if (respJSONA.Question && respJSONAAAA.Question && !respJSONA.Answer && !respJSONAAAA.Answer) {
+                // We've exhausted both IPv4 and IPv6 record requests
+                return [[], 3, 'NXDOMAIN: Domain name not exist. No A or AAAA records found for ' + domain + '.'] 
+            }
+            if (respJSONAAAA.Status === 0 && respJSONAAAA.Answer) {
+                const ipv6_answers = respJSONAAAA.Answer.filter((rr) => rr.type === AAAA_TYPE)
+                answers = answers.concat(ipv6_answers)
+            }
         }
         let ip_addrs = []
         for (const rr of answers) {
@@ -242,9 +238,11 @@ async function DNSLookup(domain: string): Promise<string[] | []> {
         }
         console.log("Alpaca| Found IP ADDRs", ip_addrs, "for domains", domain, ". Adding to cache")
         DNS_CACHE[todaysDate][domain] = ip_addrs
-        return ip_addrs
-    } catch {
-        return []
+        return [ip_addrs, 0, '']
+    } catch(e) {
+        const err_msg = 'Encountered problem looking up DNS for ' + domain + ':' + e
+        console.error();
+        return [[], 0, err_msg];
     }
 }
 
@@ -257,13 +255,16 @@ async function parseArgs(request: any, sender: any) {
         return {data: CF_IPv4_LIST};
     } else if (request.requestName === "CF_IPV6_LIST") {
         return {data: CF_IPv6_LIST};
-    } else if (request.requestName === "DNS_LOOKUP") {
+    } else if (request.requestName === "PUBLIC_SUFFIX_LIST") {
+        return {data: PUBLIC_SUFFIX_LIST};
+    } else if (request.requestName === "DNS_LOOKUP") { 
+        // domain should match PSL because it's been checked in content script
         let domain = request.domain
         if (domain.includes('://')) { // Get rid of scheme
             domain = domain.split('://')[1]
         }
-        const ip_addrs: string[] = await DNSLookup(domain)
-        return {data: ip_addrs, error: ip_addrs && ip_addrs[0] === "invalid_domain"};
+        const [ip_addrs, dns_code, err_msg] = await DNSLookup(domain)
+        return {data: ip_addrs, dns_code: dns_code, error: err_msg};
     }
     return {data: "UNKNOWN REQUEST NAME"};
 }
