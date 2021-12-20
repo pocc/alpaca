@@ -52,28 +52,82 @@ async function contentScriptMain() {
     await highlight_ips()
 }
 
-// Takes in a str looking like 1.2.3.4 or 1.2.3.4/28 and a str looking like 1.2.3.4/28
-function IsIpv4InCidr(subsetIPStr: string, CidrNotationStr: string) {
-    function IPNumber(ipAddr: string, maskSizeStr: string): number {
-        let ip = ipAddr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-        if (ip) {
-            const ipNum = (+ip[1]<<24) + (+ip[2]<<16) + (+ip[3]<<8) + (+ip[4]);
-            const maskSize = parseInt(maskSizeStr, 10)
-            const mask = -1<<(32-maskSize)
-            return ipNum & mask
-        }
-        return 0
+/************
+ * IP logic *
+ ************/
+ type IPNumber = {
+    ipInt: BigInt;
+    ipType: 4 | 6;
+} | null
+const normalize_ipv6 = (ipv6: string) => {
+    const MAX_IPV6_HEXTETS = 8;
+    // There can be at most one ::
+    if (ipv6.includes('::')) {
+        const [ipv6Pre, ipv6Post] = ipv6.split('::');
+        const ipv6_pre_hextets = ipv6Post.split(':').length;
+        const ipv6_post_hextets = ipv6Post.split(':').length;
+        const omitted_zero_hextets = MAX_IPV6_HEXTETS - ipv6_pre_hextets - ipv6_post_hextets + 1;
+        ipv6 = ipv6.replace('::', ':0000'.repeat(omitted_zero_hextets) + ':');
     }
-    const [cidrIPStr, cidrMaskStr] = CidrNotationStr.split('/');
-    let [IPAddrStr, IPAddrMaskStr] = subsetIPStr.split('/');
-    IPAddrMaskStr = IPAddrMaskStr || cidrMaskStr // If only an IP address is provided, assume the cidr net's mask
-    return IPNumber(IPAddrStr, IPAddrMaskStr) === IPNumber(cidrIPStr, cidrMaskStr) && cidrMaskStr <= IPAddrMaskStr
+    // Pad left 0s to every group
+    const groups = ipv6.split(':')
+    groups.map((g) => {g.padStart(4, '0')})
+    ipv6 = groups.join(':')
+    return ipv6
 }
 
-function IsIpv6InCidr(subsetIPStr: string, CidrNotationStr: string) {
-    // Very bad 
-    return subsetIPStr.substr(0,8) === CidrNotationStr.substr(0,8)
+function bitShift(num: number, bits: number): bigint { // leftshift (<<) that can handle > 32 bit shifts 
+    return BigInt(num) * BigInt(Math.pow(2, bits));
 }
+
+function parseIP(ipAddr2Parse: string[], radix: number, bitsPerGroup: number, maskSize: number, bitsPerAddress: number) {
+    // Get an IP number 
+    let ipNum = BigInt(0);
+    const groupStrList: string[] = ipAddr2Parse.reverse();
+    for (let i=0; i< groupStrList.length; i++) {
+        const groupInt = parseInt(groupStrList[i], radix)
+        ipNum += bitShift(groupInt, bitsPerGroup * i);
+    }
+    const mask = BigInt(bitShift(-1, bitsPerAddress - maskSize));
+    return ipNum & mask;
+}
+
+function getIPNumObj(ipAddr: string, maskSizeStr: string): IPNumber {
+    let ipv4 = ipAddr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    let ipv6 = ipAddr.match(new RegExp('^' + '([0-9a-f]+):'.repeat(7) + '([0-9a-f]+)$'));
+    const maskSize = parseInt(maskSizeStr, 10)
+    if (ipv4) {
+        ipv4 = ipv4.splice(1,);
+        return {ipInt: parseIP(ipv4, 10, 8, maskSize, 32), ipType: 4}
+    } else if (ipv6) {
+        ipv6 = ipv6.splice(1,);
+        return {ipInt: parseIP(ipv6, 16, 16, maskSize, 128), ipType: 6}
+    }
+    return null
+}
+
+// Takes in a str looking like 1.2.3.4 or 1.2.3.4/28 and a str looking like 1.2.3.4/28
+// Possible optimization is to remove BigInt in favor of parsing smaller numbers
+// This code is about ~2x faster for IPv6 than isInSubnet in https://github.com/beaugunderson/ip-address
+function IsIpInSupernet(subnetIPStr: string, supernetIPStr: string): boolean {
+    // Takes an IPv4 or IPv6 address or subnet and verifies whether it is in an IPv4 or IPv6 supernet.
+    // If the subnet and supernet differ in IP type, this will return false.
+    if (subnetIPStr.includes(':')) {
+        subnetIPStr = normalize_ipv6(subnetIPStr)
+    }
+    const [cidrIPStr, cidrMaskStr] = supernetIPStr.split('/');
+    let [IPAddrStr, IPAddrMaskStr] = subnetIPStr.split('/');
+    IPAddrMaskStr = IPAddrMaskStr || cidrMaskStr // If only an IP address is provided, assume the cidr net's mask
+    const superNetMaskBigger = parseInt(cidrMaskStr) <= parseInt(IPAddrMaskStr)
+    const subnetIP = getIPNumObj(IPAddrStr, cidrMaskStr);
+    const supernetIP = getIPNumObj(cidrIPStr, cidrMaskStr);
+    const ipNumbersMatch = subnetIP && supernetIP && subnetIP.ipInt === supernetIP.ipInt && subnetIP.ipType === supernetIP.ipType;
+    return superNetMaskBigger && ipNumbersMatch || false
+}
+
+/*******************
+ * Highlight logic *
+ *******************/
 
 async function highlight_ips() {
     // Hardcoding these so I don't have to use a background script to get them
