@@ -42,9 +42,10 @@ chrome.runtime.onMessage.addListener(
 // Taken from https://stackoverflow.com/questions/53497/regular-expression-that-matches-valid-ipv6-addresses
 const IPV4ADDR_RE  = /((?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\/?\d{0,2})/g
 const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(?::[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(?:ffff(?::0{1,4}){0,1}:){0,1}(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])|(?:[0-9a-fA-F]{1,4}:){1,4}:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\\/?\\d{0,2})', 'g')
-// https://stackoverflow.com/a/5717133
+// https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
-const DOMAIN_RE = /(?:^|\s)((?:https?:\/\/)?(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,})/g  // domain name
+// 
+const DOMAIN_RE = /(^(?:https?:\/\/)?((((?!-))(xn--|_{1,1})?[a-z0-9-]{0,61}[a-z0-9]{1,1}\.)*(xn--)?([a-z0-9][a-z0-9\-]{0,60}|[a-z0-9-]{1,30}\.[a-z]{2,}))$)/g  // domain name
 
 const ADDR_REGEX = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source + '|' + DOMAIN_RE.source, 'g')
 
@@ -55,12 +56,14 @@ async function contentScriptMain() {
 /************
  * IP logic *
  ************/
- type IPNumber = {
-    ipInt: BigInt;
-    ipType: 4 | 6;
+type IPversion = 4 | 6
+type IPAddrGroups = {
+    ipGroupList: Uint32Array;
+    ipType: IPversion;
 } | null
 const normalize_ipv6 = (ipv6: string) => {
     const MAX_IPV6_HEXTETS = 8;
+    // Expand out :: to :0000: as many times as needed
     // There can be at most one ::
     if (ipv6.includes('::')) {
         const [ipv6Pre, ipv6Post] = ipv6.split('::');
@@ -73,56 +76,83 @@ const normalize_ipv6 = (ipv6: string) => {
     const groups = ipv6.split(':')
     groups.map((g) => {g.padStart(4, '0')})
     ipv6 = groups.join(':')
+    ipv6 = ipv6.replace('.', ':') // IPv4 address space
     return ipv6
 }
 
-function bitShift(num: number, bits: number): bigint { // leftshift (<<) that can handle > 32 bit shifts 
-    return BigInt(num) * BigInt(Math.pow(2, bits));
+// Parse an IP address into number groups, and match the mask to all groups
+function parseIP(ipAddr2Parse: string[], radix: number, bitsPerGroup: number, maskSize: number, bitsPerAddress: number): Uint32Array {
+    let ipGroupList = ipAddr2Parse.map((g) => parseInt(g, radix))
+    let ipGroupIntList = new Uint32Array(ipGroupList)
+    let ipNumAry = new Uint32Array(bitsPerAddress / 8)
+    for (let i=0; i< ipGroupIntList.length; i++) {
+        const ipGroupInt = ipGroupIntList[i];
+        if (maskSize >= bitsPerGroup) 
+            ipNumAry[i] = ipGroupInt;
+        else if (maskSize > 0)
+            ipNumAry[i] = ipGroupInt & -Math.pow(2, bitsPerGroup - maskSize);
+        else 
+            return ipNumAry;
+        maskSize -= bitsPerGroup;
+    }    
+    return ipNumAry;
 }
 
-function parseIP(ipAddr2Parse: string[], radix: number, bitsPerGroup: number, maskSize: number, bitsPerAddress: number) {
-    // Get an IP number 
-    let ipNum = BigInt(0);
-    const groupStrList: string[] = ipAddr2Parse.reverse();
-    for (let i=0; i< groupStrList.length; i++) {
-        const groupInt = parseInt(groupStrList[i], radix)
-        ipNum += bitShift(groupInt, bitsPerGroup * i);
-    }
-    const mask = BigInt(bitShift(-1, bitsPerAddress - maskSize));
-    return ipNum & mask;
-}
-
-function getIPNumObj(ipAddr: string, maskSizeStr: string): IPNumber {
-    let ipv4 = ipAddr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-    let ipv6 = ipAddr.match(new RegExp('^' + '([0-9a-f]+):'.repeat(7) + '([0-9a-f]+)$'));
+function getIPNumObj(ipAddr: string, maskSizeStr: string, IPver: IPversion): IPAddrGroups {
     const maskSize = parseInt(maskSizeStr, 10)
-    if (ipv4) {
-        ipv4 = ipv4.splice(1,);
-        return {ipInt: parseIP(ipv4, 10, 8, maskSize, 32), ipType: 4}
-    } else if (ipv6) {
-        ipv6 = ipv6.splice(1,);
-        return {ipInt: parseIP(ipv6, 16, 16, maskSize, 128), ipType: 6}
+    if (IPver === 4) {
+        let ipv4 = ipAddr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+        if (ipv4) {
+            ipv4 = ipv4.splice(1,);
+            return {ipGroupList: parseIP(ipv4, 10, 8, maskSize, 32), ipType: 4}
+        }
+    } else if (IPver === 6) {
+        let ipv6 = ipAddr.match(new RegExp('^' + '([0-9a-f]+):'.repeat(7) + '([0-9a-f]+)$'));
+        if (ipv6) {
+            ipv6 = ipv6.splice(1,);
+            return {ipGroupList: parseIP(ipv6, 16, 16, maskSize, 128), ipType: 6}
+        }
     }
     return null
 }
 
 // Takes in a str looking like 1.2.3.4 or 1.2.3.4/28 and a str looking like 1.2.3.4/28
-// Possible optimization is to remove BigInt in favor of parsing smaller numbers
 // This code is about ~2x faster for IPv6 than isInSubnet in https://github.com/beaugunderson/ip-address
+/* Tests: 
+    IsIpInSupernet("2001:db8::ff00:42:8329", "2001:db8:0:0:0:ff00:0:0/95") => true
+    IsIpInSupernet("2001:db8::ff0f:42:8329", "2001:db8:0:0:0:ff00:0:0/95") => false
+    IsIpInSupernet("2001:db8::ff00:42:8329/73", "2001:db8:0:0:0:ff00:0:0/95") => false
+    IsIpInSupernet("192.168.4.0/25", "192.168.0.0/17") => true
+    IsIpInSupernet("192.169.0.0/25", "192.168.0.0/17") => false
+ */
 function IsIpInSupernet(subnetIPStr: string, supernetIPStr: string): boolean {
     // Takes an IPv4 or IPv6 address or subnet and verifies whether it is in an IPv4 or IPv6 supernet.
     // If the subnet and supernet differ in IP type, this will return false.
-    if (subnetIPStr.includes(':')) {
-        subnetIPStr = normalize_ipv6(subnetIPStr)
+    let [supernetIPAddr, supernetMaskStr] = supernetIPStr.split('/');
+    let [subnetIPAddr, subnetMaskStr] = subnetIPStr.split('/');
+    let IPversion: IPversion;
+    if (subnetIPStr.includes('.') && supernetIPAddr.includes('.')) {
+        IPversion = 4;
+    } else if (subnetIPStr.includes(':') && supernetIPAddr.includes(':')) {
+        subnetIPAddr = normalize_ipv6(subnetIPAddr);
+        supernetIPAddr = normalize_ipv6(supernetIPAddr);
+        IPversion = 6;
+    } else {
+        return false;
     }
-    const [cidrIPStr, cidrMaskStr] = supernetIPStr.split('/');
-    let [IPAddrStr, IPAddrMaskStr] = subnetIPStr.split('/');
-    IPAddrMaskStr = IPAddrMaskStr || cidrMaskStr // If only an IP address is provided, assume the cidr net's mask
-    const superNetMaskBigger = parseInt(cidrMaskStr) <= parseInt(IPAddrMaskStr)
-    const subnetIP = getIPNumObj(IPAddrStr, cidrMaskStr);
-    const supernetIP = getIPNumObj(cidrIPStr, cidrMaskStr);
-    const ipNumbersMatch = subnetIP && supernetIP && subnetIP.ipInt === supernetIP.ipInt && subnetIP.ipType === supernetIP.ipType;
-    return superNetMaskBigger && ipNumbersMatch || false
+
+    // If an IP address is provided without a subnet, assume it's a singleton /32 or /128
+    const subnetAddrMask = parseInt(subnetMaskStr) || IPversion === 4 && 32 || IPversion === 6 && 128
+    const superNetMaskBigger = parseInt(supernetMaskStr) <= subnetAddrMask
+    const subnetIP = getIPNumObj(subnetIPAddr, supernetMaskStr, IPversion);
+    const supernetIP = getIPNumObj(supernetIPAddr, supernetMaskStr, IPversion);
+    if (!subnetIP || !supernetIP)
+        return false;
+    const subnetIPTypesMatch = subnetIP.ipType === supernetIP.ipType
+    for (let i=0; i < supernetIP.ipGroupList.length; i++) // Verify that every IP group is the same
+        if (subnetIP.ipGroupList[i] !== supernetIP.ipGroupList[i])
+            return false
+    return superNetMaskBigger && subnetIPTypesMatch;
 }
 
 /*******************
@@ -234,14 +264,14 @@ function modify_addrs(ip_addrs: string[], domain: string, parentNode: HTMLElemen
     }
     let matchRe = new RegExp(match, 'g')
     for (const v4_addr of v4_match) {
-        let last_addr_replaced = highlight_IP(parentNode, v4_addr, ip_addrs, CF_IPV4_LIST, matchRe, match, IsIpv4InCidr);
+        let last_addr_replaced = highlight_IP(parentNode, v4_addr, ip_addrs, CF_IPV4_LIST, matchRe, match);
         addr_replaced = last_addr_replaced || addr_replaced
         if (!last_addr_replaced) {
             replaceNonCF(parentNode, v4_addr, ip_addrs, domain, matchRe, match)
         }
     }
     for (const v6_addr of v6_match) {
-        let last_addr_replaced = highlight_IP(parentNode, v6_addr, ip_addrs, CF_IPV6_LIST, matchRe, match, IsIpv6InCidr);
+        let last_addr_replaced = highlight_IP(parentNode, v6_addr, ip_addrs, CF_IPV6_LIST, matchRe, match);
         addr_replaced = last_addr_replaced || addr_replaced
         if (!last_addr_replaced) {
             replaceNonCF(parentNode, v6_addr, ip_addrs, domain, matchRe, match)
@@ -252,9 +282,9 @@ function modify_addrs(ip_addrs: string[], domain: string, parentNode: HTMLElemen
         console.log("Alpaca|", "🟠", domain_str, ip_addrs, "in Cloudflare")
 }
 
-function highlight_IP(parentNode: HTMLElement, ip_addr: string, ip_addrs: string[], CF_IPlist: string[], matchRe: RegExp, match: string, ipSubnetFunc: any): boolean {
+function highlight_IP(parentNode: HTMLElement, ip_addr: string, ip_addrs: string[], CF_IPlist: string[], matchRe: RegExp, match: string): boolean {
     for (const ip_subnet of CF_IPlist) {
-        if (ipSubnetFunc(ip_addr, ip_subnet)) {
+        if (IsIpInSupernet(ip_addr, ip_subnet)) {
             const spanData = `id="alpaca_${ip_addr}" title="${ip_addr} in CF ${ip_subnet}.\nAll: ${ip_addrs}">${match}`;
             const spanStr = `<span class="alpaca_cloudflare alpaca_addr"${spanData}</span>`
             parentNode.innerHTML = parentNode.innerHTML.replace(matchRe,  spanStr);
