@@ -36,8 +36,11 @@ chrome.runtime.onMessage.addListener(
         if (!request.url && !request.event) {
             console.log("Alpaca|", "💬", "Problem parsing request. Expecting url, event:", request)
         }
+        const last_url = new URL(LAST_URL)
+        const req_url = new URL(request.url)
         // If there's a new URL that hasn't been highlighted
-        if (LAST_URL !== request.url) {
+        if (last_url.origin !== req_url.origin || last_url.pathname !== req_url.pathname) {
+            LAST_URL = request.url
             highlight(ADDR_REGEX)
             sendResponse('Highlighting ' + request.url);
         } else {
@@ -53,7 +56,7 @@ const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(
 // https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
 // 
-const DOMAIN_RE =  /((?:https?:\/\/)?(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,})/g
+const DOMAIN_RE =  /((?:https?:\/\/)?(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,}\.?(?::\d{1,5})?)/g
 
 const ADDR_REGEX = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source + '|' + DOMAIN_RE.source, 'g')
 
@@ -197,80 +200,54 @@ async function highlight(regex: RegExp) {
     let currentNode = treeWalker.nextNode();
         
     while (currentNode) {
-        nodes.push({
-            textNode: currentNode,
-            start: text.length
-        });
-        text += currentNode.nodeValue
+        nodes.push(currentNode);
+        text += currentNode.nodeValue + '|' // hacky way to prevent cross-node regex
         currentNode = treeWalker.nextNode() as Node;
     }
     
+    let spanNodes = [];
     if (!nodes.length)
         return;
 
-    let match;
-    let spanNodes = [];
-    while (match = regex.exec(text)) {
-        const matchLength = match[0].length;
-        
-        // Prevent empty matches causing infinite loops        
-        if (!matchLength)
-        {
-            regex.lastIndex++;
+    for (var i = 0; i < nodes.length; ++i) {
+        let node = nodes[i];
+        let text = node.textContent
+        if (!text)
+            continue;
+
+        // skip any links in svg, script, style tags
+        const parentNode = node.parentNode;
+        if (parentNode) {
+            if (["svg", "script", "style", "noscript"].includes(parentNode.nodeName.toLowerCase()))
+                continue;
+            // Don't recurse on self
+            if ((parentNode as HTMLElement).classList.value.includes('alpaca_addr')) {
+                continue;
+            }
+        }
+        if ((node.textContent as string).includes('alpaca_addr')) {
             continue;
         }
-        
-        for (var i = 0; i < nodes.length; ++i) {
-            let node = nodes[i];
-            const nodeLength = (node.textNode.nodeValue as string).length;
-            
-            // skip any links in svg, script, style tags
-            const parentNode = node.textNode.parentNode;
-            if (parentNode) {
-                if (["svg", "script", "style"].includes(parentNode.nodeName.toLowerCase()))
-                    continue;
-            }
-            // Skip nodes before the match
-            if (node.start + nodeLength <= match.index)
-                continue;
-        
-            // Break after the match
-            if (node.start >= match.index + matchLength)
-                break;
-            
-            // Split the start node if required
-            if (node.start < match.index) {
-                nodes.splice(i + 1, 0, {
-                    textNode: (node.textNode as Text).splitText(match.index - node.start),
-                    start: match.index
-                });
-                continue;
-            }
-            
-            // Split the end node if required
-            if (node.start + nodeLength > match.index + matchLength) {
-                nodes.splice(i + 1, 0, {
-                    textNode: (node.textNode as Text).splitText(match.index + matchLength - node.start),
-                    start: match.index + matchLength
-                });
-            }
 
-            const addr = node.textNode.textContent as string;
+        let matches = [... text.matchAll(ADDR_REGEX)]
 
+        for (let match of matches.reverse()) {
+            let index = match.index || 0;
             // Only mark domains that match the PSL
-            if (addr.match(DOMAIN_RE)) {
-                if (!is_domain_valid(addr)) {
+            if (match[0].match(DOMAIN_RE)) {
+                if (!is_domain_valid(match[0])) {
                     continue;
                 }
             }
+            let range = document.createRange();
+            range.setStart(node, index);
+            range.setEnd(node, index + match[0].length);
             
-            // Highlight the current node
-            // Highlight IPv4 and IPv6 immediately because no fetches are required
-            const spanNode = document.createElement("span");
+            let spanNode = document.createElement("span");
             spanNode.className = "alpaca_addr";
-            mark_addr(spanNode, [addr], '');
-            (node.textNode.parentNode as HTMLElement).replaceChild(spanNode, node.textNode);
-            spanNode.appendChild(node.textNode);
+            mark_addr(spanNode, [text], '');    
+            spanNode.appendChild(range.extractContents());
+            range.insertNode(spanNode);
             spanNodes.push(spanNode)
         }
     }
@@ -355,6 +332,9 @@ function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string
 }
 
 function is_domain_valid(domain: string) {
+    if (domain.endsWith('.')) { // root doesn't need to be in domain
+        domain = domain.slice(0, -1)
+    }
     let is_valid_domain = false
     for (const tld of PUBLIC_SUFFIX_LIST) {
         if (domain === tld) {
