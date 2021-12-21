@@ -12,6 +12,8 @@ window.addEventListener('load', contentScriptMain);
 let CF_IPV4_LIST: string[] = []
 let CF_IPV6_LIST: string[] = []
 let PUBLIC_SUFFIX_LIST: string[] = []
+// This could cause significant network traffic, so it should be user configurable
+let GET_STATUS_CODES_FOR_ALL_URLS = false
 chrome.runtime.sendMessage({requestName: "CF_IPV4_LIST"}, function(response) {
     if (DEBUG)
         console.log("Alpaca|", "💬", "Received from background script, asked for IPv4", response.data)
@@ -56,7 +58,12 @@ const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(
 // https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
 // 
-const DOMAIN_RE =  /((?:https?:\/\/)?(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,}\.?(?::\d{1,5})?)/g
+const SCHEME_RE = /(?:https?:\/\/)?/
+const HOST_RE =  /(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,}\.?/
+const PORT_RE = /(?::\d{1,5})?/
+const URL_PATH_RE = /\/[a-zA-Z0-9._~!$&#()?%*+,;=:@\/-]*/
+const DOMAIN_RE = new RegExp(SCHEME_RE.source + HOST_RE.source + PORT_RE.source + '(?:' + URL_PATH_RE.source + ')?', 'g')
+const DOMAIN_WITH_PATH_RE = new RegExp(SCHEME_RE.source + HOST_RE.source + PORT_RE.source + URL_PATH_RE.source, 'g')
 
 const ADDR_REGEX = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source + '|' + DOMAIN_RE.source, 'g')
 
@@ -65,7 +72,11 @@ async function contentScriptMain() {
     const url = document.location.href
     console.log("Alpaca|", "🖊️", "Highlighting", url)
     LAST_URL = url
-    await highlight(ADDR_REGEX)
+    if (document.contentType.startsWith('text/json') || document.contentType === 'application/json') {
+        await highlight_text(ADDR_REGEX) // this algo is faster on text
+    } else { // sholud be contentType === 'text/html'
+        await highlight(ADDR_REGEX)
+    }
     console.timeEnd('alpaca');
 }
 
@@ -182,7 +193,6 @@ function IsIpInSupernet(subnetIPStr: string, supernetIPStr: string): boolean {
  *******************/
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Document/createTreeWalker
-// https://stackoverflow.com/questions/31275446/how-to-wrap-part-of-a-text-in-a-node-with-javascript
 async function highlight(regex: RegExp) {
     const acceptFn = (node: HTMLElement) => {
         if (node.textContent && node.textContent.match(regex)) {
@@ -196,12 +206,10 @@ async function highlight(regex: RegExp) {
         { acceptNode: acceptFn},
     );
     let nodes = [];
-    let text = '';
     let currentNode = treeWalker.nextNode();
         
     while (currentNode) {
         nodes.push(currentNode);
-        text += currentNode.nodeValue + '|' // hacky way to prevent cross-node regex
         currentNode = treeWalker.nextNode() as Node;
     }
     
@@ -234,12 +242,12 @@ async function highlight(regex: RegExp) {
         for (let match of matches) {
             let index = (match.index || 0) - offset;
             // Only mark domains that match the PSL
-            if (match[0].match(DOMAIN_RE)) {
-                if (!is_domain_valid(match[0])) {
+            let host_match = match[0].match(HOST_RE)
+            if (host_match) {
+                if (!is_domain_valid(host_match[0])) {
                     continue;
                 }
             }
-                debugger;
             let range = document.createRange();
             range.setStart(node, index);
             range.setEnd(node, index + match[0].length);
@@ -265,8 +273,120 @@ async function highlight(regex: RegExp) {
     }
 }
 
+// https://stackoverflow.com/questions/31275446/how-to-wrap-part-of-a-text-in-a-node-with-javascript
+// This algorithm is better at highlighting large blocks of text
+async function highlight_text(regex: RegExp) {
+    const acceptFn = (node: HTMLElement) => {
+        if (node.textContent && node.textContent.match(regex)) {
+            return NodeFilter.FILTER_ACCEPT;
+        }
+        return NodeFilter.FILTER_SKIP;
+    }
+    const treeWalker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        { acceptNode: acceptFn},
+    );
+    let nodes = [];
+    let text = '';
+    let currentNode = treeWalker.nextNode();
+        
+    while (currentNode) {
+        nodes.push({
+            textNode: currentNode,
+            start: text.length
+        });
+        text += currentNode.nodeValue
+        currentNode = treeWalker.nextNode() as Node;
+    }
+    
+    if (!nodes.length)
+        return;
+
+    let match;
+    let spanNodes = [];
+    while (match = regex.exec(text)) {
+        const matchLength = match[0].length;
+        
+        // Prevent empty matches causing infinite loops        
+        if (!matchLength)
+        {
+            regex.lastIndex++;
+            continue;
+        }
+        
+        for (var i = 0; i < nodes.length; ++i) {
+            let node = nodes[i];
+            const nodeLength = (node.textNode.nodeValue as string).length;
+
+            // Skip nodes before the match
+            if (node.start + nodeLength <= match.index)
+                continue;
+        
+            // Break after the match
+            if (node.start >= match.index + matchLength)
+                break;
+            
+            // Split the start node if required
+            if (node.start < match.index) {
+                nodes.splice(i + 1, 0, {
+                    textNode: (node.textNode as Text).splitText(match.index - node.start),
+                    start: match.index
+                });
+                continue;
+            }
+            
+            // Split the end node if required
+            if (node.start + nodeLength > match.index + matchLength) {
+                nodes.splice(i + 1, 0, {
+                    textNode: (node.textNode as Text).splitText(match.index + matchLength - node.start),
+                    start: match.index + matchLength
+                });
+            }
+
+            const addr = node.textNode.textContent as string;
+
+            // Only mark domains that match the PSL
+            let host_addr = addr.match(HOST_RE) 
+            if (host_addr) {
+                if (!is_domain_valid(host_addr[0])) {
+                    continue;
+                }
+            }
+            
+            // Highlight the current node
+            // Highlight IPv4 and IPv6 immediately because no fetches are required
+            const spanNode = document.createElement("span");
+            spanNode.className = "alpaca_addr";
+            mark_addr(spanNode, [addr], '');
+            (node.textNode.parentNode as HTMLElement).replaceChild(spanNode, node.textNode);
+            spanNode.appendChild(node.textNode);
+            spanNodes.push(spanNode)
+        }
+    }
+    // Domains should be checked async after IPs because they require fetch
+    // Should fire async as fast as it can go
+    // Hopefully no race conditions as nodes are separate
+    for (let node of spanNodes) {
+        if (node.textContent) {
+            modify_page(node, node.textContent);
+        }
+    }
+}
+
+// This function exists so that you can see the response code of the URL
+// It's possible to return more, but let's start with status code
+async function fetch_url(url: string) {
+    const response: {status_code: number, error: string} = await new Promise((resolve) => {
+        browser.runtime.sendMessage({requestName: "URL_FETCH", url: url}, (response) => {
+            resolve(response)
+        });
+    });
+    return response.status_code;
+}
+
 async function modify_page(spanNode: HTMLSpanElement, addr: string) {
-    const domain_match = addr.match(DOMAIN_RE);
+    const domain_match = addr.match(HOST_RE);
     if (domain_match) {
         const domain = domain_match[0];
         if (Object.keys(DNS_CACHE).includes(domain)) {  // DNS_CACHE isn't guaranteed to be used because everything is async
@@ -285,6 +405,12 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
                 modify_addrs(spanNode, ip_addrs, domain, response)
             } else {
                 modify_addrs(spanNode, [], '', response)
+            }
+            // Don't check HTTP status code if there was a DNS error
+            if (response.dns_code !== 0 && GET_STATUS_CODES_FOR_ALL_URLS && addr.match(DOMAIN_WITH_PATH_RE)) {
+                const status_code = await fetch_url(addr)
+                const statusCode = '[' + status_code.toString() + '] '
+                spanNode.insertAdjacentText('afterbegin', statusCode)
             }
         }
     } else {

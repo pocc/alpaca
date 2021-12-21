@@ -246,6 +246,13 @@ async function DNSLookup(domain: string): Promise<[string[], number, string]> {
     }
 }
 
+// Check the status code of a URL
+async function fetchURL(url: string) {
+    const resp = await fetch(url, { method: 'GET', redirect: 'follow'});
+    console.log("Got url and resp:", url, resp);
+    return resp;
+}
+
 async function parseArgs(request: any, sender: any) {
     if (DEBUG)
         console.log(sender.tab ?
@@ -265,6 +272,13 @@ async function parseArgs(request: any, sender: any) {
         }
         const [ip_addrs, dns_code, err_msg] = await DNSLookup(domain)
         return {data: ip_addrs, dns_code: dns_code, error: err_msg};
+    } else if (request.requestName === "URL_FETCH") {
+        try {
+            const resp = await fetchURL(request.url)
+            return {status_code: resp.status, error: ''}
+        } catch (e) {
+            return {status_code: 404, error: e}
+        }
     }
     return {data: "UNKNOWN REQUEST NAME"};
 }
