@@ -255,9 +255,7 @@ async function fetchURL(url: string) {
 
 async function parseArgs(request: any, sender: any) {
     if (DEBUG)
-        console.log(sender.tab ?
-            "Alpaca| Got request from content script: " + sender.tab.url + JSON.stringify(request):
-            "Got request from the extension");
+        console.log(sender.tab ? "Alpaca| Got request from content script: " + sender.tab.url + JSON.stringify(request): "Got request from the extension");
     if (request.requestName === "CF_IPV4_LIST") {
         return {data: CF_IPv4_LIST};
     } else if (request.requestName === "CF_IPV6_LIST") {

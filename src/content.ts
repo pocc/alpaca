@@ -61,7 +61,8 @@ const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(
 const SCHEME_RE = /(?:https?:\/\/)?/
 const HOST_RE =  /(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,}\.?/
 const PORT_RE = /(?::\d{1,5})?/
-const URL_PATH_RE = /\/[a-zA-Z0-9._~!$&#()?%*+,;=:@\/-]*/
+// Not including valid characters () because [link text](link url) is common and makes this trickier 
+const URL_PATH_RE = /\/[a-zA-Z0-9._~!$&#?%*+,;=:@\/-]*/
 const DOMAIN_RE = new RegExp(SCHEME_RE.source + HOST_RE.source + PORT_RE.source + '(?:' + URL_PATH_RE.source + ')?', 'g')
 const DOMAIN_WITH_PATH_RE = new RegExp(SCHEME_RE.source + HOST_RE.source + PORT_RE.source + URL_PATH_RE.source, 'g')
 
@@ -247,6 +248,10 @@ async function highlight(regex: RegExp) {
                 if (!is_domain_valid(host_match[0])) {
                     continue;
                 }
+            }
+            // Executive decision that IPv6 addresses less than 6 characters like :: and ::1 aren't interesting 
+            if (match[0].match(IPV6ADDR_RE) && match[0].length < 6) {
+                continue;
             }
             let range = document.createRange();
             range.setStart(node, index);

@@ -18,7 +18,7 @@
       ],
     "web_accessible_resources": ["/*.png"],
     "manifest_version": 2,
-    "permissions": ["activeTab", "webRequestBlocking", "webRequest", "webNavigation", "*://*/*"],
+    "permissions": ["activeTab"],
     "author": "Ross Jacobs",
     "name": "Alpaca",
     "description": "Highlight IPs and domains with useful information",
