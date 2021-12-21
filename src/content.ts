@@ -205,7 +205,7 @@ async function highlight(regex: RegExp) {
         currentNode = treeWalker.nextNode() as Node;
     }
     
-    let spanNodes = [];
+    let spanNodes: HTMLSpanElement[] = [];
     if (!nodes.length)
         return;
 
@@ -230,24 +230,28 @@ async function highlight(regex: RegExp) {
         }
 
         let matches = [... text.matchAll(ADDR_REGEX)]
-
-        for (let match of matches.reverse()) {
-            let index = match.index || 0;
+        let offset = 0;
+        for (let match of matches) {
+            let index = (match.index || 0) - offset;
             // Only mark domains that match the PSL
             if (match[0].match(DOMAIN_RE)) {
                 if (!is_domain_valid(match[0])) {
                     continue;
                 }
             }
+                debugger;
             let range = document.createRange();
             range.setStart(node, index);
             range.setEnd(node, index + match[0].length);
             
             let spanNode = document.createElement("span");
             spanNode.className = "alpaca_addr";
-            mark_addr(spanNode, [text], '');    
             spanNode.appendChild(range.extractContents());
             range.insertNode(spanNode);
+            if (!spanNode.nextSibling)
+                continue;
+            node = spanNode.nextSibling;
+            offset += index + match[0].length;
             spanNodes.push(spanNode)
         }
     }
@@ -283,7 +287,9 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
                 modify_addrs(spanNode, [], '', response)
             }
         }
-    } 
+    } else {
+        modify_addrs(spanNode, [addr], '', null)
+    }
 }
 
 function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string, response: dns_response | null) {
