@@ -1,10 +1,9 @@
 import { dns_response } from '../index';
 // Alpaca Content Script
 const browser = chrome
-const DEBUG = false
+const DEBUG = true
 let DNS_CACHE: {[url: string]: string[]} = {}  // Having a DNS_CACHE on an ephemeral page sholud be fine
 let LAST_URL = ""
-const NO_ERR = ""
 
 console.log("Alpaca|", "🎬"," Content script loaded on", document.location.href)
 window.addEventListener('load', contentScriptMain);
@@ -16,17 +15,17 @@ let PUBLIC_SUFFIX_LIST: string[] = []
 let GET_STATUS_CODES_FOR_ALL_URLS = false
 chrome.runtime.sendMessage({requestName: "CF_IPV4_LIST"}, function(response) {
     if (DEBUG)
-        console.log("Alpaca|", "💬", "Received from background script, asked for IPv4", response.data)
+        console.log("Alpaca|", "💬", "Received from service_worker script, asked for IPv4", response.data)
     CF_IPV4_LIST = response.data
 });
 chrome.runtime.sendMessage({requestName: "CF_IPV6_LIST"}, function(response) {
     if (DEBUG)
-        console.log("Alpaca|", "💬", "Received from background script, asked for IPv6", response.data)
+        console.log("Alpaca|", "💬", "Received from service_worker script, asked for IPv6", response.data)
     CF_IPV6_LIST = response.data
 });
 chrome.runtime.sendMessage({requestName: "PUBLIC_SUFFIX_LIST"}, function(response) {
     if (DEBUG)
-        console.log("Alpaca|", "💬", "Received from background script, asked for IPv6", response.data)
+        console.log("Alpaca|", "💬", "Received from service_worker script, asked for Public Suffix List", response.data)
     PUBLIC_SUFFIX_LIST = response.data
 });
 
@@ -34,7 +33,7 @@ chrome.runtime.sendMessage({requestName: "PUBLIC_SUFFIX_LIST"}, function(respons
 chrome.runtime.onMessage.addListener(
     function(request, _, sendResponse) {
         if (DEBUG)
-            console.log("Alpaca|", "💬", "Received message from background script", request)
+            console.log("Alpaca|", "💬", "Received message from service_worker script", request)
         if (!request.url && !request.event) {
             console.log("Alpaca|", "💬", "Problem parsing request. Expecting url, event:", request)
         }
@@ -57,9 +56,15 @@ const IPV4ADDR_RE  = /((?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?
 const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(?::[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(?:ffff(?::0{1,4}){0,1}:){0,1}(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])|(?:[0-9a-fA-F]{1,4}:){1,4}:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\\/?\\d{0,2})', 'g')
 // https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
-// 
-const SCHEME_RE = /(?:https?:\/\/)?/
-const HOST_RE =  /(?:[a-zA-Z\d][A-Za-z\d\.-]*\.)+[a-zA-Z]{2,}\.?/
+
+/* Generated with this clientside javascript on https://www.iana.org/assignments/uri-schemes/uri-schemes.xhtml
+ * let tbody = document.querySelector('#table-uri-schemes-1 > tbody')
+ * let regex = '/(?:' + [...tbody.rows].map(i=>i.cells[0].textContent).join('|') + ')?/'
+ */
+const SCHEME_RE = /(?:(?:aaa|aaas|about|acap|acct|acd|acr|adiumxtra|adt|afp|afs|aim|amss|android|appdata|apt|ar|ark|attachment|aw|barion|bb|beshare|bitcoin|bitcoincash|blob|bolo|browserext|cabal|calculator|callto|cap|cast|casts|chrome|chrome-extension|cid|coap|coap+tcp|coap+ws|coaps|coaps+tcp|coaps+ws|com-eventbrite-attendee|content|content-type|crid|cstr|cvs|dab|dat|data|dav|dhttp|diaspora|dict|did|dis|dlna-playcontainer|dlna-playsingle|dns|dntp|doi|dpp|drm|drop|dtmi|dtn|dvb|dvx|dweb|ed2k|eid|elsi|embedded|ens|ethereum|example|facetime|fax|feed|feedready|fido|file|filesystem|finger|first-run-pen-experience|fish|fm|ftp|fuchsia-pkg|geo|gg|git|gitoid|gizmoproject|go|gopher|graph|grd|gtalk|h323|ham|hcap|hcp|http|https|hxxp|hxxps|hydrazone|hyper|iax|icap|icon|im|imap|info|iotdisco|ipfs|ipn|ipns|ipp|ipps|irc|irc6|ircs|iris|iris.beep|iris.lwz|iris.xpc|iris.xpcs|isostore|itms|jabber|jar|jms|keyparc|lastfm|lbry|ldap|ldaps|leaptofrogans|lorawan|lpa|lvlt|magnet|mailserver|mailto|maps|market|matrix|message|microsoft.windows.camera|microsoft.windows.camera.multipicker|microsoft.windows.camera.picker|mid|mms|modem|mongodb|moz|ms-access|ms-appinstaller|ms-browser-extension|ms-calculator|ms-drive-to|ms-enrollment|ms-excel|ms-eyecontrolspeech|ms-gamebarservices|ms-gamingoverlay|ms-getoffice|ms-help|ms-infopath|ms-inputapp|ms-lockscreencomponent-config|ms-media-stream-id|ms-meetnow|ms-mixedrealitycapture|ms-mobileplans|ms-newsandinterests|ms-officeapp|ms-people|ms-project|ms-powerpoint|ms-publisher|ms-remotedesktop-launch|ms-restoretabcompanion|ms-screenclip|ms-screensketch|ms-search|ms-search-repair|ms-secondary-screen-controller|ms-secondary-screen-setup|ms-settings|ms-settings-airplanemode|ms-settings-bluetooth|ms-settings-camera|ms-settings-cellular|ms-settings-cloudstorage|ms-settings-connectabledevices|ms-settings-displays-topology|ms-settings-emailandaccounts|ms-settings-language|ms-settings-location|ms-settings-lock|ms-settings-nfctransactions|ms-settings-notifications|ms-settings-power|ms-settings-privacy|ms-settings-proximity|ms-settings-screenrotation|ms-settings-wifi|ms-settings-workplace|ms-spd|ms-stickers|ms-sttoverlay|ms-transit-to|ms-useractivityset|ms-virtualtouchpad|ms-visio|ms-walk-to|ms-whiteboard|ms-whiteboard-cmd|ms-word|msnim|msrp|msrps|mss|mt|mtqp|mumble|mupdate|mvn|news|nfs|ni|nih|nntp|notes|num|ocf|oid|onenote|onenote-cmd|opaquelocktoken|openpgp4fpr|otpauth|p1|pack|palm|paparazzi|payment|payto|pkcs11|platform|pop|pres|prospero|proxy|pwid|psyc|pttp|qb|query|quic-transport|redis|rediss|reload|res|resource|rmi|rsync|rtmfp|rtmp|rtsp|rtsps|rtspu|sarif|secondlife|secret-token|service|session|sftp|sgn|shc|shttp (OBSOLETE)|sieve|simpleledger|simplex|sip|sips|skype|smb|smp|sms|smtp|snews|snmp|soap.beep|soap.beeps|soldat|spiffe|spotify|ssb|ssh|starknet|steam|stun|stuns|submit|svn|swh|swid|swidpath|tag|taler|teamspeak|tel|teliaeid|telnet|tftp|things|thismessage|tip|tn3270|tool|turn|turns|tv|udp|unreal|upt|urn|ut2004|uuid-in-package|v-event|vemmi|ventrilo|ves|videotex|vnc|view-source|vscode|vscode-insiders|vsls|w3|wais|web3|wcr|webcal|web+ap|wifi|wpid|ws|wss|wtai|wyciwyg|xcon|xcon-userid|xfire|xmlrpc.beep|xmlrpc.beeps|xmpp|xri|ymsgr|z39.50|z39.50r|z39.50s):\/\/)?/
+// faster
+// const SCHEME_RE = /(?:[0-9a-z.-]+)?/ 
+const HOST_RE =  /(?:[a-zA-Z0-9][A-Za-z0-9\.-]*\.)+[a-zA-Z]{2,}\.?/
 const PORT_RE = /(?::\d{1,5})?/
 // Not including valid characters () because [link text](link url) is common and makes this trickier 
 const URL_PATH_RE = /\/[a-zA-Z0-9._~!$&#?%*+,;=:@\/-]*/
@@ -137,14 +142,14 @@ function getIPNumObj(ipAddr: string, maskSizeStr: string, IPver: IPversion): IPA
     if (IPver === 4) {
         let ipv4 = ipAddr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
         if (ipv4) {
-            ipv4 = ipv4.splice(1,);
-            return {ipGroupList: parseIP(ipv4, 10, 8, maskSize, 32), ipType: 4}
+            let ipv4Ary = ipv4.splice(1,);
+            return {ipGroupList: parseIP(ipv4Ary, 10, 8, maskSize, 32), ipType: 4}
         }
     } else if (IPver === 6) {
         let ipv6 = ipAddr.match(new RegExp('^' + '([0-9a-f]+):'.repeat(7) + '([0-9a-f]+)$'));
         if (ipv6) {
-            ipv6 = ipv6.splice(1,);
-            return {ipGroupList: parseIP(ipv6, 16, 16, maskSize, 128), ipType: 6}
+            let ipv6Ary = ipv6.splice(1,);
+            return {ipGroupList: parseIP(ipv6Ary, 16, 16, maskSize, 128), ipType: 6}
         }
     }
     return null
@@ -196,7 +201,9 @@ function IsIpInSupernet(subnetIPStr: string, supernetIPStr: string): boolean {
 // https://developer.mozilla.org/en-US/docs/Web/API/Document/createTreeWalker
 async function highlight(regex: RegExp) {
     const acceptFn = (node: HTMLElement) => {
-        if (node.textContent && node.textContent.match(regex)) {
+        // Taken from JQuery via https://stackoverflow.com/a/26915468
+        const isHidden = node.style && node.style.display === 'none' || !node.ownerDocument.contains(node)
+        if (node.textContent && node.textContent.match(regex) && !isHidden) {
             return NodeFilter.FILTER_ACCEPT;
         }
         return NodeFilter.FILTER_SKIP;
@@ -280,9 +287,14 @@ async function highlight(regex: RegExp) {
 
 // https://stackoverflow.com/questions/31275446/how-to-wrap-part-of-a-text-in-a-node-with-javascript
 // This algorithm is better at highlighting large blocks of text
+// Unexpected reasons a link is broken up into multiple nodes (and why this is necessary):
+//   * Other software has highlighted the domain and path, but not schema.
+//   * When searching, the system may bold the keyword in the middle of a URL.
 async function highlight_text(regex: RegExp) {
     const acceptFn = (node: HTMLElement) => {
-        if (node.textContent && node.textContent.match(regex)) {
+        // Taken from JQuery via https://stackoverflow.com/a/26915468
+        const isHidden = node.style.display.toLowerCase() === 'none' || !node.ownerDocument.contains(node)
+        if (node.textContent && node.textContent.match(regex) && !isHidden) {
             return NodeFilter.FILTER_ACCEPT;
         }
         return NodeFilter.FILTER_SKIP;
@@ -396,20 +408,20 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
         const domain = domain_match[0];
         if (Object.keys(DNS_CACHE).includes(domain)) {  // DNS_CACHE isn't guaranteed to be used because everything is async
             console.log(`Alpaca| Got ${domain} from content script cache`)
-            modify_addrs(spanNode, DNS_CACHE[domain], domain, null)
+            await modify_addrs(spanNode, DNS_CACHE[domain], domain, null)
         } else {
             const response: dns_response = await new Promise((resolve) => {
                 browser.runtime.sendMessage({requestName: "DNS_LOOKUP", domain: domain}, (response) => {
                     resolve(response)
                 });
             });
-            if (!response.error) {
+            if (response?.data && !response?.error) {
                 const ip_addrs = response.data
                 DNS_CACHE[domain] = ip_addrs
-                console.log(`Alpaca| Got ${domain} from background script cache`)
-                modify_addrs(spanNode, ip_addrs, domain, response)
+                console.log(`Alpaca| Got ${domain} from service_worker script cache`)
+                await modify_addrs(spanNode, ip_addrs, domain, response)
             } else {
-                modify_addrs(spanNode, [], '', response)
+                await modify_addrs(spanNode, [], addr, response)
             }
             // Don't check HTTP status code if there was a DNS error
             if (response.dns_code !== 0 && GET_STATUS_CODES_FOR_ALL_URLS && addr.match(DOMAIN_WITH_PATH_RE)) {
@@ -419,11 +431,11 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
             }
         }
     } else {
-        modify_addrs(spanNode, [addr], '', null)
+        await modify_addrs(spanNode, [addr], '', null)
     }
 }
 
-function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string, response: dns_response | null) {
+async function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string, response: dns_response | null) {
     if (response && (response.dns_code !== 0 || response.error.length > 0)) { // If no IP address was returned
         spanNode.classList.add('alpaca_nxdomain');
         spanNode.title = `DNS RCODE ${response.dns_code}\n${response.error}`;
@@ -431,11 +443,11 @@ function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domain: str
         return;
     }
     // Should work for both IPv4/6 addrs
-    mark_addr(spanNode, ip_addrs, domain)
+    await mark_addr(spanNode, ip_addrs, domain)
 }
 
 // Mark an IPv4 or IPv6 address
-function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string) {
+async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string) {
     domain = domain || 'Domain unknown';
     let is_cf = false;
     let CF_IP_LIST;
@@ -448,7 +460,7 @@ function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string
     } else {
         return;
     }
-    let cf_msg = `🟠 ${domain} proxied over Cloudflare\n`
+    let cf_msg = `🟠 proxied over Cloudflare\n${domain}\n `
     for (const ip_subnet of CF_IP_LIST) {
         for (const ip_addr of ip_addrs) {
             if (IsIpInSupernet(ip_addr, ip_subnet)) {
@@ -457,13 +469,20 @@ function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string
             }
         }
     }
+    /*
+    let ipData = [];
+    for (let ip of ip_addrs) {
+        let resp = await fetch(`https://rdap.arin.net/registry/ip/${ip}`);
+        let ipDatum = await resp.json();
+        ipData.push(ipDatum);
+    }*/
     if (is_cf) {
         console.log(`Alpaca| 🟠 ${domain} [${ip_addrs}] in Cloudflare IP ranges`)
         spanNode.title = cf_msg
         spanNode.classList.add('alpaca_cloudflare')
     } else {
         console.log(`Alpaca| 🟣 ${domain} [${ip_addrs}] not in Cloudflare IP ranges`)
-        spanNode.title = `🟣 ${domain} is not proxied over Cloudflare\n\n${ip_addrs.join('\n')}`
+        spanNode.title = `🟣 not proxied over Cloudflare\n${domain}\n\n${ip_addrs.join('\n')}`
         spanNode.classList.add('alpaca_non_cloudflare')
     }
 }

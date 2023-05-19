@@ -8,8 +8,6 @@ build: clean
 	tsc && cp manifest.json media/orange* src/*.css build
 # Delete export lines that ES5 chrome can't understand
 	sd 'export \{\};\n' '' ./build/*.js
-	sd '.*if (DEBUG).*' '' ./build/*.js
-	sd '.*console\..*' '' ./build/*.js
 
 mock_release: build
 	sd '.*if \(DEBUG\).*' '' ./build/*.js

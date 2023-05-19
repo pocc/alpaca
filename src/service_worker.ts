@@ -1,4 +1,4 @@
-/* Background script. */
+/* Service Worker script. */
 const browser = chrome;
 let PUBLIC_SUFFIX_LIST = Object();
 let CF_IPv4_LIST: string[] = []
@@ -261,6 +261,10 @@ async function parseArgs(request: any, sender: any) {
     } else if (request.requestName === "CF_IPV6_LIST") {
         return {data: CF_IPv6_LIST};
     } else if (request.requestName === "PUBLIC_SUFFIX_LIST") {
+        if (Object.keys(PUBLIC_SUFFIX_LIST).length === 0) {
+            // For some reason, it doesn't get set sometimes
+            PUBLIC_SUFFIX_LIST = await setPublicSuffixList();
+        }
         return {data: PUBLIC_SUFFIX_LIST};
     } else if (request.requestName === "DNS_LOOKUP") { 
         // domain should match PSL because it's been checked in content script

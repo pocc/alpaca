@@ -4,6 +4,8 @@ Short descriptions of planned bugs/features
 
 ## Bugs
 
+https://www.amazon.com/Motel-Mysteries-David-Macaulay/dp/0395284252/ hangs
+
 ## Feature Requests
 
 ### In Progress
