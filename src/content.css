@@ -12,10 +12,30 @@
     color:#000;
     background-color: #fed8c0;
 }
+.alpaca_akamai {
+    border:1px solid #807a0b;
+    color:#000;
+    background-color: #e5deb9;
+}
+.alpaca_aws {
+    border:1px solid #12741f;
+    color:#000;
+    background-color: #bddfc3;
+}
+.alpaca_google {
+    border:1px solid #611898;
+    color:#000;
+    background-color: #ccb6e2;
+}
+.alpaca_microsoft {
+    border:1px solid #aa2494;
+    color:#000;
+    background-color: #e59ed9;
+}
 .alpaca_non_cloudflare {
     border:1px solid #2158b8;
     color:#000;
-    background-color: #9bb9ed;
+    background-color: #b4c9ee;
 }
 .alpaca_nxdomain {
     border:1px solid #F00;

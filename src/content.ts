@@ -2,26 +2,19 @@ import { dns_response } from '../index';
 // Alpaca Content Script
 const browser = chrome
 const DEBUG = true
+let IPS: any = {};
 let DNS_CACHE: {[url: string]: string[]} = {}  // Having a DNS_CACHE on an ephemeral page sholud be fine
 let LAST_URL = ""
 
 console.log("Alpaca|", "🎬"," Content script loaded on", document.location.href)
 window.addEventListener('load', contentScriptMain);
-
-let CF_IPV4_LIST: string[] = []
-let CF_IPV6_LIST: string[] = []
 let PUBLIC_SUFFIX_LIST: string[] = []
 // This could cause significant network traffic, so it should be user configurable
 let GET_STATUS_CODES_FOR_ALL_URLS = false
-chrome.runtime.sendMessage({requestName: "CF_IPV4_LIST"}, function(response) {
+chrome.runtime.sendMessage({requestName: "IPS"}, function(response) {
     if (DEBUG)
-        console.log("Alpaca|", "💬", "Received from service_worker script, asked for IPv4", response.data)
-    CF_IPV4_LIST = response.data
-});
-chrome.runtime.sendMessage({requestName: "CF_IPV6_LIST"}, function(response) {
-    if (DEBUG)
-        console.log("Alpaca|", "💬", "Received from service_worker script, asked for IPv6", response.data)
-    CF_IPV6_LIST = response.data
+        console.log("Alpaca|", "💬", "Received from service_worker script, asked for IPS", response.data)
+    IPS = response.data
 });
 chrome.runtime.sendMessage({requestName: "PUBLIC_SUFFIX_LIST"}, function(response) {
     if (DEBUG)
@@ -450,22 +443,58 @@ async function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domai
 async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string) {
     domain = domain || 'Domain unknown';
     let is_cf = false;
+    let is_aws = false;
+    let is_akamai = false;
+    let is_google = false;
+    let is_microsoft = false;
     let CF_IP_LIST;
     const first_ip_addr = ip_addrs[0]
     if (first_ip_addr.match(IPV4ADDR_RE)) {
-        CF_IP_LIST = CF_IPV4_LIST
+        CF_IP_LIST = IPS.CF_IPV4
     }
     else if (first_ip_addr.match(IPV6ADDR_RE)) {
-        CF_IP_LIST = CF_IPV6_LIST
+        CF_IP_LIST = IPS.CF_IPV6
     } else {
         return;
     }
-    let cf_msg = `🟠 proxied over Cloudflare\n${domain}\n `
+    let msg = '';
     for (const ip_subnet of CF_IP_LIST) {
         for (const ip_addr of ip_addrs) {
             if (IsIpInSupernet(ip_addr, ip_subnet)) {
-                cf_msg += `\n${ip_addr} in Cloudflare ${ip_subnet}`
+                msg = `🟠 proxied over Cloudflare\n${domain}\n\n${ip_addr} in Cloudflare ${ip_subnet}`;
                 is_cf = true;
+            }
+        }
+    }
+    for(const ip_subnet of IPS.AWS_LIST) {
+        for (const ip_addr of ip_addrs) {
+            if (IsIpInSupernet(ip_addr, ip_subnet)) {
+                msg = `🟢 Uses AWS\n${domain}\n\n${ip_addr} in AWS ${ip_subnet}`;
+                is_aws = true;
+            }
+        }
+    }
+    for(const ip_subnet of IPS.AKAMAI) {
+        for (const ip_addr of ip_addrs) {
+            if (IsIpInSupernet(ip_addr, ip_subnet)) {
+                msg = `🟡 Uses Akamai\n${domain}\n\n${ip_addr} in Akamai ${ip_subnet}`;
+                is_akamai = true;
+            }
+        }
+    }
+    for(const ip_subnet of IPS.GOOGLE) {
+        for (const ip_addr of ip_addrs) {
+            if (IsIpInSupernet(ip_addr, ip_subnet)) {
+                msg = `🟣 Uses Google\n${domain}\n\n${ip_addr} in Google ${ip_subnet}`;
+                is_google = true;
+            }
+        }
+    }
+    for(const ip_subnet of IPS.MICROSOFT) {
+        for (const ip_addr of ip_addrs) {
+            if (IsIpInSupernet(ip_addr, ip_subnet)) {
+                msg = `🟤 Uses Microsoft\n${domain}\n\n${ip_addr} in Microsoft ${ip_subnet}`;
+                is_microsoft = true;
             }
         }
     }
@@ -478,11 +507,27 @@ async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: 
     }*/
     if (is_cf) {
         console.log(`Alpaca| 🟠 ${domain} [${ip_addrs}] in Cloudflare IP ranges`)
-        spanNode.title = cf_msg
+        spanNode.title = msg
         spanNode.classList.add('alpaca_cloudflare')
-    } else {
-        console.log(`Alpaca| 🟣 ${domain} [${ip_addrs}] not in Cloudflare IP ranges`)
-        spanNode.title = `🟣 not proxied over Cloudflare\n${domain}\n\n${ip_addrs.join('\n')}`
+    } else if (is_aws) {
+        console.log(`Alpaca| 🟢 ${domain} [${ip_addrs}] in AWS IP ranges`)
+        spanNode.title = msg
+        spanNode.classList.add('alpaca_aws')
+    }  else if (is_akamai) {
+        console.log(`Alpaca| 🟡 ${domain} [${ip_addrs}] in Akamai ranges`)
+        spanNode.title = msg
+        spanNode.classList.add('alpaca_akamai')
+    } else if (is_google) {
+        console.log(`Alpaca| 🟣 ${domain} [${ip_addrs}] in Google ranges`)
+        spanNode.title = msg
+        spanNode.classList.add('alpaca_google')
+    } else if (is_microsoft) {
+        console.log(`Alpaca| 🟤 ${domain} [${ip_addrs}] in Microsoft ranges`)
+        spanNode.title = msg
+        spanNode.classList.add('alpaca_microsoft')
+    } else{
+        console.log(`Alpaca| 🔵 ${domain} [${ip_addrs}] not in Cloudflare, AWS, Akamai, Google IP ranges`)
+        spanNode.title = `🔵 does not use Cloudflare, AWS, Akamai, Google\n${domain}\n\n${ip_addrs.join('\n')}`
         spanNode.classList.add('alpaca_non_cloudflare')
     }
 }
