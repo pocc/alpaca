@@ -57,7 +57,7 @@ const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(
 const SCHEME_RE = /(?:(?:aaa|aaas|about|acap|acct|acd|acr|adiumxtra|adt|afp|afs|aim|amss|android|appdata|apt|ar|ark|attachment|aw|barion|bb|beshare|bitcoin|bitcoincash|blob|bolo|browserext|cabal|calculator|callto|cap|cast|casts|chrome|chrome-extension|cid|coap|coap+tcp|coap+ws|coaps|coaps+tcp|coaps+ws|com-eventbrite-attendee|content|content-type|crid|cstr|cvs|dab|dat|data|dav|dhttp|diaspora|dict|did|dis|dlna-playcontainer|dlna-playsingle|dns|dntp|doi|dpp|drm|drop|dtmi|dtn|dvb|dvx|dweb|ed2k|eid|elsi|embedded|ens|ethereum|example|facetime|fax|feed|feedready|fido|file|filesystem|finger|first-run-pen-experience|fish|fm|ftp|fuchsia-pkg|geo|gg|git|gitoid|gizmoproject|go|gopher|graph|grd|gtalk|h323|ham|hcap|hcp|http|https|hxxp|hxxps|hydrazone|hyper|iax|icap|icon|im|imap|info|iotdisco|ipfs|ipn|ipns|ipp|ipps|irc|irc6|ircs|iris|iris.beep|iris.lwz|iris.xpc|iris.xpcs|isostore|itms|jabber|jar|jms|keyparc|lastfm|lbry|ldap|ldaps|leaptofrogans|lorawan|lpa|lvlt|magnet|mailserver|mailto|maps|market|matrix|message|microsoft.windows.camera|microsoft.windows.camera.multipicker|microsoft.windows.camera.picker|mid|mms|modem|mongodb|moz|ms-access|ms-appinstaller|ms-browser-extension|ms-calculator|ms-drive-to|ms-enrollment|ms-excel|ms-eyecontrolspeech|ms-gamebarservices|ms-gamingoverlay|ms-getoffice|ms-help|ms-infopath|ms-inputapp|ms-lockscreencomponent-config|ms-media-stream-id|ms-meetnow|ms-mixedrealitycapture|ms-mobileplans|ms-newsandinterests|ms-officeapp|ms-people|ms-project|ms-powerpoint|ms-publisher|ms-remotedesktop-launch|ms-restoretabcompanion|ms-screenclip|ms-screensketch|ms-search|ms-search-repair|ms-secondary-screen-controller|ms-secondary-screen-setup|ms-settings|ms-settings-airplanemode|ms-settings-bluetooth|ms-settings-camera|ms-settings-cellular|ms-settings-cloudstorage|ms-settings-connectabledevices|ms-settings-displays-topology|ms-settings-emailandaccounts|ms-settings-language|ms-settings-location|ms-settings-lock|ms-settings-nfctransactions|ms-settings-notifications|ms-settings-power|ms-settings-privacy|ms-settings-proximity|ms-settings-screenrotation|ms-settings-wifi|ms-settings-workplace|ms-spd|ms-stickers|ms-sttoverlay|ms-transit-to|ms-useractivityset|ms-virtualtouchpad|ms-visio|ms-walk-to|ms-whiteboard|ms-whiteboard-cmd|ms-word|msnim|msrp|msrps|mss|mt|mtqp|mumble|mupdate|mvn|news|nfs|ni|nih|nntp|notes|num|ocf|oid|onenote|onenote-cmd|opaquelocktoken|openpgp4fpr|otpauth|p1|pack|palm|paparazzi|payment|payto|pkcs11|platform|pop|pres|prospero|proxy|pwid|psyc|pttp|qb|query|quic-transport|redis|rediss|reload|res|resource|rmi|rsync|rtmfp|rtmp|rtsp|rtsps|rtspu|sarif|secondlife|secret-token|service|session|sftp|sgn|shc|shttp (OBSOLETE)|sieve|simpleledger|simplex|sip|sips|skype|smb|smp|sms|smtp|snews|snmp|soap.beep|soap.beeps|soldat|spiffe|spotify|ssb|ssh|starknet|steam|stun|stuns|submit|svn|swh|swid|swidpath|tag|taler|teamspeak|tel|teliaeid|telnet|tftp|things|thismessage|tip|tn3270|tool|turn|turns|tv|udp|unreal|upt|urn|ut2004|uuid-in-package|v-event|vemmi|ventrilo|ves|videotex|vnc|view-source|vscode|vscode-insiders|vsls|w3|wais|web3|wcr|webcal|web+ap|wifi|wpid|ws|wss|wtai|wyciwyg|xcon|xcon-userid|xfire|xmlrpc.beep|xmlrpc.beeps|xmpp|xri|ymsgr|z39.50|z39.50r|z39.50s):\/\/)?/
 // faster
 // const SCHEME_RE = /(?:[0-9a-z.-]+)?/ 
-const HOST_RE =  /(?:[a-zA-Z0-9][A-Za-z0-9\.-]*\.)+[a-zA-Z]{2,}\.?/
+const HOST_RE =  /(?:[a-zA-Z0-9][A-Za-z0-9-]*\.)+[a-zA-Z]{2,}\.?/
 const PORT_RE = /(?::\d{1,5})?/
 // Not including valid characters () because [link text](link url) is common and makes this trickier 
 const URL_PATH_RE = /\/[a-zA-Z0-9._~!$&#?%*+,;=:@\/-]*/
@@ -250,8 +250,8 @@ async function highlight(regex: RegExp) {
         // skip any links in svg, script, style tags
         const parentNode = node.parentNode;
         if (parentNode) {
-            if (["svg", "script", "style", "noscript"].includes(parentNode.nodeName.toLowerCase()))
-                continue;
+            if (["svg", "script", "style", "noscript", "pre", "code"].includes(parentNode.nodeName.toLowerCase()))
+                break;
             // Don't recurse on self
             if ((parentNode as HTMLElement).classList.value.includes('alpaca_addr')) {
                 continue;
@@ -280,7 +280,7 @@ async function highlight(regex: RegExp) {
             range.setStart(node, index);
             range.setEnd(node, index + match[0].length);
             
-            let spanNode = document.createElement("span");
+            let spanNode = document.createElement("button");
             spanNode.className = "alpaca_addr";
             spanNode.appendChild(range.extractContents());
             range.insertNode(spanNode);
@@ -465,35 +465,19 @@ async function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domai
 // Mark an IPv4 or IPv6 address
 async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string) {
     domain = domain || 'Domain unknown';
-    let is_cf = false;
-    let is_aws = false;
-    let is_akamai = false;
-    let is_google = false;
-    let is_microsoft = false;
-    let CF_IP_LIST;
-    const first_ip_addr = ip_addrs[0]
-    if (first_ip_addr.match(IPV4ADDR_RE)) {
-        CF_IP_LIST = IPS.CF_IPV4
-    }
-    else if (first_ip_addr.match(IPV6ADDR_RE)) {
-        CF_IP_LIST = IPS.CF_IPV6
-    } else {
-        return;
-    }
-    let msg = '';
 
     function get_ips() {
-        let cf_ips = ipsInSubnet(ip_addrs, IPS.CF)
+        let cf_ips = ipsInSubnet(ip_addrs, IPS.CF);
         if (Object.keys(cf_ips).length > 0) return ['cloudflare', cf_ips];
-        let aws_ips = ipsInSubnet(ip_addrs, IPS.AWS_LIST)
+        let aws_ips = ipsInSubnet(ip_addrs, IPS.AWS_LIST);
         if (Object.keys(aws_ips).length > 0) return ['amazon', aws_ips];
-        let akamai_ips = ipsInSubnet(ip_addrs, IPS.AKAMAI)
+        let akamai_ips = ipsInSubnet(ip_addrs, IPS.AKAMAI);
         if (Object.keys(akamai_ips).length > 0) return ['akamai', akamai_ips];
-        let google_ips = ipsInSubnet(ip_addrs, IPS.GOOGLE)
+        let google_ips = ipsInSubnet(ip_addrs, IPS.GOOGLE);
         if (Object.keys(google_ips).length > 0) return ['google', google_ips];
-        let microsoft_ips = ipsInSubnet(ip_addrs, IPS.MICROSOFT)
+        let microsoft_ips = ipsInSubnet(ip_addrs, IPS.MICROSOFT);
         if (Object.keys(microsoft_ips).length > 0) return ['microsoft', microsoft_ips];
-        return ['other', null]
+        return ['other_cdn', null]
     }
 
     let [source, ip_list] = get_ips()
@@ -503,13 +487,13 @@ async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: 
         akamai: "🟡",
         google: "🟣",
         microsoft: "🟤",
-        other: "🔵"
+        other_cdn: "🔵"
     }
 
-    let ip_list_str = source === 'other' ? ip_addrs.join('\n') : Object.entries(ip_list).map(i=>i.join(' in ')).join('\n');
-
-    console.log(`Alpaca| ${company_emojis[source]} ${domain} [${ip_list_str}] `)
-    spanNode.title = `${company_emojis[source]} uses ${source}\n${domain}\n\n${ip_list_str}`
+    let ip_list_str = source === 'other_cdn' ? ip_addrs.join('\n') : Object.entries(ip_list).map(i=>`${source.padEnd(10, ' ')}| ` + i.join(` ∈ `)).join('\n');
+    let message =  `${company_emojis[source]} ${domain}\n\n${ip_list_str}`
+    console.log('Alpaca|' + message)
+    spanNode.title = message
     spanNode.classList.add(`alpaca_${source}`)
     // Should be async and not tie up execution
     addAsnInfo(spanNode, ip_addrs, domain);
@@ -537,8 +521,9 @@ async function addAsnInfo(spanNode: HTMLSpanElement, ip_addrs: string[], domain:
             resolve(response.data)
         });
     }).then((asnData: any) => {
-        let asnDataStr = Object.values(asnData).join(' | ');
-        spanNode.title += asnDataStr;
+        delete asnData.ip;
+        let asnDataStr = Object.entries(asnData).map(i=>i.join(': ')).join('\n');
+        spanNode.title += '\n\n' + asnDataStr;
     })
 }
 
