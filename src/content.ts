@@ -1,4 +1,4 @@
-import { dns_response } from '../index';
+import { dns_response, cymru_asn } from '../index';
 // Alpaca Content Script
 const browser = chrome
 const DEBUG = true
@@ -11,19 +11,19 @@ window.addEventListener('load', contentScriptMain);
 let PUBLIC_SUFFIX_LIST: string[] = []
 // This could cause significant network traffic, so it should be user configurable
 let GET_STATUS_CODES_FOR_ALL_URLS = false
-chrome.runtime.sendMessage({requestName: "IPS"}, function(response) {
+browser.runtime.sendMessage({requestName: "IPS"}, function(response) {
     if (DEBUG)
-        console.log("Alpaca|", "💬", "Received from service_worker script, asked for IPS", response.data)
+        console.log("Alpaca|", "💬", "Received IPS from service_worker script, asked for IPS", response.data)
     IPS = response.data
 });
-chrome.runtime.sendMessage({requestName: "PUBLIC_SUFFIX_LIST"}, function(response) {
+browser.runtime.sendMessage({requestName: "PUBLIC_SUFFIX_LIST"}, function(response) {
     if (DEBUG)
         console.log("Alpaca|", "💬", "Received from service_worker script, asked for Public Suffix List", response.data)
     PUBLIC_SUFFIX_LIST = response.data
 });
 
 
-chrome.runtime.onMessage.addListener(
+browser.runtime.onMessage.addListener(
     function(request, _, sendResponse) {
         if (DEBUG)
             console.log("Alpaca|", "💬", "Received message from service_worker script", request)
@@ -129,19 +129,42 @@ function parseIP(ipAddr2Parse: string[], radix: number, bitsPerGroup: number, ma
     return ipNumAry;
 }
 
+// basic validator to avoid slow regexes
+function isValidIPv4(ip: string): boolean {
+    let octets: Array<string> = ip.split('.');
+    if (octets.length !== 4) return false
+    for (let i=0; i < octets.length; ++i) {
+        let octet = octets[i];
+        if (octet.length > 3) return false;
+        if (octet.length === 3) {
+            if (octet.charCodeAt(0) < 49 || octet.charCodeAt(0) > 50) return false;
+            octet = octet.slice(1,)
+        }
+        if (octet.charCodeAt(0) < 48 || octet.charCodeAt(0) > 57 || octet.charCodeAt(1) < 48 || octet.charCodeAt(1) > 57) return false;
+    }
+    return true;
+}
+
+// basic validator to avoid slow regexes
+function isValidIPv6(ip: string): boolean {
+    for (let i=0; i<ip.length; ++i) {
+        // If outside of chars '0123456789:' => not IPv6
+        if (ip.charCodeAt(i) < 48 || ip.charCodeAt(i) > 58) return false;
+    }
+    return true;
+}
+
 function getIPNumObj(ipAddr: string, maskSizeStr: string, IPver: IPversion): IPAddrGroups {
     // Not using existing IPv4 And IPv6 regexes because they don't have capture groups for the IP addr groups
     const maskSize = parseInt(maskSizeStr, 10)
     if (IPver === 4) {
-        let ipv4 = ipAddr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-        if (ipv4) {
-            let ipv4Ary = ipv4.splice(1,);
+        if (isValidIPv4(ipAddr)) {
+            let ipv4Ary = ipAddr.split('.');
             return {ipGroupList: parseIP(ipv4Ary, 10, 8, maskSize, 32), ipType: 4}
         }
     } else if (IPver === 6) {
-        let ipv6 = ipAddr.match(new RegExp('^' + '([0-9a-f]+):'.repeat(7) + '([0-9a-f]+)$'));
-        if (ipv6) {
-            let ipv6Ary = ipv6.splice(1,);
+        if (isValidIPv6(ipAddr)) {
+            let ipv6Ary = ipAddr.split(':');
             return {ipGroupList: parseIP(ipv6Ary, 16, 16, maskSize, 128), ipType: 6}
         }
     }
@@ -401,7 +424,7 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
         const domain = domain_match[0];
         if (Object.keys(DNS_CACHE).includes(domain)) {  // DNS_CACHE isn't guaranteed to be used because everything is async
             console.log(`Alpaca| Got ${domain} from content script cache`)
-            await modify_addrs(spanNode, DNS_CACHE[domain], domain, null)
+            modify_addrs(spanNode, DNS_CACHE[domain], domain, null)
         } else {
             const response: dns_response = await new Promise((resolve) => {
                 browser.runtime.sendMessage({requestName: "DNS_LOOKUP", domain: domain}, (response) => {
@@ -412,9 +435,9 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
                 const ip_addrs = response.data
                 DNS_CACHE[domain] = ip_addrs
                 console.log(`Alpaca| Got ${domain} from service_worker script cache`)
-                await modify_addrs(spanNode, ip_addrs, domain, response)
+                modify_addrs(spanNode, ip_addrs, domain, response)
             } else {
-                await modify_addrs(spanNode, [], addr, response)
+                modify_addrs(spanNode, [], addr, response)
             }
             // Don't check HTTP status code if there was a DNS error
             if (response.dns_code !== 0 && GET_STATUS_CODES_FOR_ALL_URLS && addr.match(DOMAIN_WITH_PATH_RE)) {
@@ -424,7 +447,7 @@ async function modify_page(spanNode: HTMLSpanElement, addr: string) {
             }
         }
     } else {
-        await modify_addrs(spanNode, [addr], '', null)
+        modify_addrs(spanNode, [addr], '', null)
     }
 }
 
@@ -458,79 +481,68 @@ async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: 
         return;
     }
     let msg = '';
-    for (const ip_subnet of CF_IP_LIST) {
-        for (const ip_addr of ip_addrs) {
-            if (IsIpInSupernet(ip_addr, ip_subnet)) {
-                msg = `🟠 proxied over Cloudflare\n${domain}\n\n${ip_addr} in Cloudflare ${ip_subnet}`;
-                is_cf = true;
-            }
-        }
+
+    function get_ips() {
+        let cf_ips = ipsInSubnet(ip_addrs, IPS.CF)
+        if (Object.keys(cf_ips).length > 0) return ['cloudflare', cf_ips];
+        let aws_ips = ipsInSubnet(ip_addrs, IPS.AWS_LIST)
+        if (Object.keys(aws_ips).length > 0) return ['amazon', aws_ips];
+        let akamai_ips = ipsInSubnet(ip_addrs, IPS.AKAMAI)
+        if (Object.keys(akamai_ips).length > 0) return ['akamai', akamai_ips];
+        let google_ips = ipsInSubnet(ip_addrs, IPS.GOOGLE)
+        if (Object.keys(google_ips).length > 0) return ['google', google_ips];
+        let microsoft_ips = ipsInSubnet(ip_addrs, IPS.MICROSOFT)
+        if (Object.keys(microsoft_ips).length > 0) return ['microsoft', microsoft_ips];
+        return ['other', null]
     }
-    for(const ip_subnet of IPS.AWS_LIST) {
-        for (const ip_addr of ip_addrs) {
-            if (IsIpInSupernet(ip_addr, ip_subnet)) {
-                msg = `🟢 Uses AWS\n${domain}\n\n${ip_addr} in AWS ${ip_subnet}`;
-                is_aws = true;
-            }
-        }
+
+    let [source, ip_list] = get_ips()
+    let company_emojis: any = {
+        cloudflare: "🟠",
+        amazon: "🟢",
+        akamai: "🟡",
+        google: "🟣",
+        microsoft: "🟤",
+        other: "🔵"
     }
-    for(const ip_subnet of IPS.AKAMAI) {
-        for (const ip_addr of ip_addrs) {
-            if (IsIpInSupernet(ip_addr, ip_subnet)) {
-                msg = `🟡 Uses Akamai\n${domain}\n\n${ip_addr} in Akamai ${ip_subnet}`;
-                is_akamai = true;
-            }
-        }
-    }
-    for(const ip_subnet of IPS.GOOGLE) {
-        for (const ip_addr of ip_addrs) {
-            if (IsIpInSupernet(ip_addr, ip_subnet)) {
-                msg = `🟣 Uses Google\n${domain}\n\n${ip_addr} in Google ${ip_subnet}`;
-                is_google = true;
-            }
-        }
-    }
-    for(const ip_subnet of IPS.MICROSOFT) {
-        for (const ip_addr of ip_addrs) {
-            if (IsIpInSupernet(ip_addr, ip_subnet)) {
-                msg = `🟤 Uses Microsoft\n${domain}\n\n${ip_addr} in Microsoft ${ip_subnet}`;
-                is_microsoft = true;
-            }
-        }
-    }
-    /*
-    let ipData = [];
-    for (let ip of ip_addrs) {
-        let resp = await fetch(`https://rdap.arin.net/registry/ip/${ip}`);
-        let ipDatum = await resp.json();
-        ipData.push(ipDatum);
-    }*/
-    if (is_cf) {
-        console.log(`Alpaca| 🟠 ${domain} [${ip_addrs}] in Cloudflare IP ranges`)
-        spanNode.title = msg
-        spanNode.classList.add('alpaca_cloudflare')
-    } else if (is_aws) {
-        console.log(`Alpaca| 🟢 ${domain} [${ip_addrs}] in AWS IP ranges`)
-        spanNode.title = msg
-        spanNode.classList.add('alpaca_aws')
-    }  else if (is_akamai) {
-        console.log(`Alpaca| 🟡 ${domain} [${ip_addrs}] in Akamai ranges`)
-        spanNode.title = msg
-        spanNode.classList.add('alpaca_akamai')
-    } else if (is_google) {
-        console.log(`Alpaca| 🟣 ${domain} [${ip_addrs}] in Google ranges`)
-        spanNode.title = msg
-        spanNode.classList.add('alpaca_google')
-    } else if (is_microsoft) {
-        console.log(`Alpaca| 🟤 ${domain} [${ip_addrs}] in Microsoft ranges`)
-        spanNode.title = msg
-        spanNode.classList.add('alpaca_microsoft')
-    } else{
-        console.log(`Alpaca| 🔵 ${domain} [${ip_addrs}] not in Cloudflare, AWS, Akamai, Google IP ranges`)
-        spanNode.title = `🔵 does not use Cloudflare, AWS, Akamai, Google\n${domain}\n\n${ip_addrs.join('\n')}`
-        spanNode.classList.add('alpaca_non_cloudflare')
-    }
+
+    let ip_list_str = source === 'other' ? ip_addrs.join('\n') : Object.entries(ip_list).map(i=>i.join(' in ')).join('\n');
+
+    console.log(`Alpaca| ${company_emojis[source]} ${domain} [${ip_list_str}] `)
+    spanNode.title = `${company_emojis[source]} uses ${source}\n${domain}\n\n${ip_list_str}`
+    spanNode.classList.add(`alpaca_${source}`)
+    // Should be async and not tie up execution
+    addAsnInfo(spanNode, ip_addrs, domain);
 }
+
+function ipsInSubnet(ip_addrs: string[], supernet: string[]) {
+    let result: any = {};
+    for (const ip_subnet of supernet) {
+        for (const ip_addr of ip_addrs) {
+            if (IsIpInSupernet(ip_addr, ip_subnet)) {
+                result[ip_addr] = ip_subnet;
+            }
+        }
+    }
+    return result;
+}
+
+async function addAsnInfo(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string) {
+    new Promise((resolve) => {
+        browser.runtime.sendMessage({requestName: "ASN_LOOKUP", ip: ip_addrs[0]}, (response) => {
+            if (response.error) {
+                console.log("Aborting request for", domain, "due to", response.error)
+                return;
+            }
+            resolve(response.data)
+        });
+    }).then((asnData: any) => {
+        let asnDataStr = Object.values(asnData).join(' | ');
+        spanNode.title += asnDataStr;
+    })
+}
+
+
 
 function is_domain_valid(domain: string) {
     if (domain.endsWith('.')) { // root doesn't need to be in domain
