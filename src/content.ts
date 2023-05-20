@@ -5,6 +5,7 @@ const DEBUG = true
 let IPS: any = {};
 let DNS_CACHE: {[url: string]: string[]} = {}  // Having a DNS_CACHE on an ephemeral page sholud be fine
 let LAST_URL = ""
+let ADDR_CACHE: any = {}; // general data for every address
 
 console.log("Alpaca|", "🎬"," Content script loaded on", document.location.href)
 window.addEventListener('load', contentScriptMain);
@@ -22,6 +23,17 @@ browser.runtime.sendMessage({requestName: "PUBLIC_SUFFIX_LIST"}, function(respon
     PUBLIC_SUFFIX_LIST = response.data
 });
 
+// https://www.w3schools.com/howto/howto_css_modals.asp
+document.body.insertAdjacentHTML('beforeend', 
+`<div id="myModal" class="alpaca_modal">
+    <div class="alpaca_modal-content">
+        <div class="alpaca_modal-header">
+            <span class="alpaca_close">&times;</span>
+        <h2 id=alpaca_modal_title></h2>
+    </div>
+    <div class="alpaca_modal-body">
+    </div>
+</div>`);
 
 browser.runtime.onMessage.addListener(
     function(request, _, sendResponse) {
@@ -50,7 +62,7 @@ browser.runtime.onMessage.addListener(
 
 // Taken from https://stackoverflow.com/questions/53497/regular-expression-that-matches-valid-ipv6-addresses
 const IPV4ADDR_RE  = /(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\/?\d{0,2}/g
-const IPV6ADDR_RE = /[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}::?[0-9a-fA-F]{0,4}(?:\/?\d{1,3})?/g
+const IPV6ADDR_RE = /[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){2,6}::?[0-9a-fA-F]{0,4}(?:\/?\d{1,3})?/g
 const IP_RE = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source, 'g')
 // https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
@@ -81,7 +93,7 @@ function contextMenuRedirect(selectionText: string) {
         window.open(`https://bgp.he.net/ip/${ip}#_ipinfo`, '_blank');
         return;
     }
-    let hostMatch = addr.match(DOMAIN_RE)
+    let hostMatch = addr.match(HOST_RE)
     if (hostMatch) {
         let host = hostMatch[0];
         window.open(`https://bgp.he.net/dns/${host}`, '_blank');
@@ -330,9 +342,9 @@ async function highlight(nodes: any) {
             range.setStart(node, index);
             range.setEnd(node, index + matchStr.length);
 
-            let spanNode = document.createElement("span");
+            let spanNode = document.createElement("button");
             spanNode.className = "alpaca_addr";
-            spanNode.id = `alpaca_${host_match}_${i}`; // Add number to the end to make it unique
+            spanNode.id = `alpaca_${host_match}_${i}-${matches.indexOf(match)}`; // Add number to the end to make it unique
             spanNode.appendChild(range.extractContents());
             range.insertNode(spanNode);
             if (!spanNode.nextSibling)
@@ -340,6 +352,47 @@ async function highlight(nodes: any) {
             node = spanNode.nextSibling;
             offset += index + matchStr.length;
             spanNodes.push(spanNode)
+
+            // Create modal to contain data when a node is clicked on.
+            // https://www.w3schools.com/howto/howto_css_modals.asp
+            let modal = document.getElementById("myModal") as HTMLElement;
+            let span = document.getElementsByClassName("alpaca_close")[0] as HTMLSpanElement;
+            // When the user clicks on the button, open the modal
+            spanNode.onclick = function() {
+                let title = document.getElementById('alpaca_modal_title') as HTMLHeadingElement;
+                title.textContent = spanNode.textContent;
+                let modalBody = document.getElementsByClassName('alpaca_modal-body')[0];
+                let domain = (spanNode as any).textContent.toLowerCase();
+                let data = ADDR_CACHE[domain];
+                if (!data) return; // wait 2s until data has populated
+                let table = document.createElement('table');
+                let thead = table.createTHead();
+                let theadRow = thead.insertRow();
+                let row = table.insertRow();
+                Object.keys(data).forEach(key=>{
+                    let cell = theadRow.insertCell();
+                    let text = document.createTextNode(key); 
+                    cell.appendChild(text)
+                });
+                Object.values(data).forEach((value:any)=>{
+                    let cell = row.insertCell();
+                    let text = document.createTextNode(value);
+                    cell.appendChild(text);
+                });
+                modalBody.textContent = '';
+                modalBody.prepend(table);
+                modal.style.display = "block";
+            }
+            // When the user clicks on <span> (x), close the modal
+            span.onclick = function() {
+                modal.style.display = "none";
+            }
+            // When the user clicks anywhere outside of the modal, close it
+            window.onclick = function(event:Event) {
+                if (event.target == modal) {
+                    modal.style.display = "none";
+                }
+            }
         }
     }
     return spanNodes;
@@ -521,7 +574,7 @@ async function modify_addrs(spanNode: HTMLSpanElement, ip_addrs: string[], domai
 
 // Mark an IPv4 or IPv6 address
 async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: string) {
-    domain = domain || 'Domain unknown';
+    domain = domain.toLowerCase() || 'Domain unknown';
 
     function get_ips() {
         let cf_ips = ipsInSubnet(ip_addrs, IPS.CF);
@@ -534,7 +587,7 @@ async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: 
         if (Object.keys(google_ips).length > 0) return ['google', google_ips];
         let microsoft_ips = ipsInSubnet(ip_addrs, IPS.MICROSOFT);
         if (Object.keys(microsoft_ips).length > 0) return ['microsoft', microsoft_ips];
-        return ['other_cdn', null]
+        return ['other_cdn', ip_addrs]
     }
 
     let [source, ip_list] = get_ips()
@@ -546,7 +599,6 @@ async function mark_addr(spanNode: HTMLSpanElement, ip_addrs: string[], domain: 
         microsoft: "🟤",
         other_cdn: "🔵"
     }
-
     let ip_list_str = source === 'other_cdn' ? ip_addrs.join('\n') : Object.entries(ip_list).map(i=>`${source.padEnd(10, ' ')}| ` + i.join(` ∈ `)).join('\n');
     let message =  `${company_emojis[source]} ${domain}\n\n${ip_list_str}`
     console.log('Alpaca|' + message)
@@ -578,6 +630,10 @@ async function addAsnInfo(spanNode: HTMLSpanElement, ip_addrs: string[], domain:
             resolve(response.data)
         });
     }).then((asnData: any) => {
+        ADDR_CACHE[domain] = {
+            ...ADDR_CACHE[domain],
+            ...asnData
+        }
         delete asnData.ip;
         let asnDataStr = Object.entries(asnData).map(i=>i.join(': ')).join('\n');
         spanNode.title += '\n\n' + asnDataStr;
