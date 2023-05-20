@@ -49,8 +49,8 @@ browser.runtime.onMessage.addListener(
 );
 
 // Taken from https://stackoverflow.com/questions/53497/regular-expression-that-matches-valid-ipv6-addresses
-const IPV4ADDR_RE  = /((?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\/?\d{0,2})/g
-const IPV6ADDR_RE = new RegExp('[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}::?[0-9a-fA-F]{0,4}', 'g')
+const IPV4ADDR_RE  = /(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\/?\d{0,2}/g
+const IPV6ADDR_RE = /[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}::?[0-9a-fA-F]{0,4}(?:\/?\d{1,3})?/g
 const IP_RE = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source, 'g')
 // https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
@@ -92,16 +92,38 @@ function contextMenuRedirect(selectionText: string) {
     alert(`Alpaca: Selected text "${addrWithEllipses}" does not match the hostname or IP regexes.`)
 }
 
+/*
+// Attempt to reapply highlighting after page load.
+
+let observer = new MutationObserver(async mutations => {
+    for(let mutation of mutations) {
+        let nodes = mutation.addedNodes as any;
+        if (nodes.length > 0) {
+            // mirror filtering logic in treeWalker
+            nodes = [...nodes].filter((node:any)=>{
+                const isHidden = node.style && node.style.display === 'none' || !node.ownerDocument.contains(node)
+                return node.textContent && node.textContent.match(ADDR_REGEX) && !isHidden
+            })
+            highlight(nodes).then((spanNodes:any) => modifyNodes(spanNodes));
+        }
+     }
+ });
+ observer.observe(document, { childList: true, subtree: true });
+ */
+
 async function contentScriptMain() {
     console.time('alpaca');
     const url = document.location.href
     console.log("Alpaca|", "🖊️", "Highlighting", url)
     LAST_URL = url
+    let highlighter;
     if (document.contentType.startsWith('text/json') || document.contentType === 'application/json') {
-        await highlight_text(ADDR_REGEX) // this algo is faster on text
+        highlighter = highlight_text(ADDR_REGEX) // this algo is faster on text
     } else { // sholud be contentType === 'text/html'
-        await highlight(ADDR_REGEX)
+        let candidateNodes = await walkNodes(ADDR_REGEX);
+        highlighter = highlight(candidateNodes)
     }
+    highlighter.then((spanNodes:any) => modifyNodes(spanNodes));
     console.timeEnd('alpaca');
 }
 
@@ -241,7 +263,7 @@ function IsIpInSupernet(subnetIPStr: string, supernetIPStr: string): boolean {
  *******************/
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Document/createTreeWalker
-async function highlight(regex: RegExp) {
+async function walkNodes(regex: RegExp) {
     const acceptFn = (node: HTMLElement) => {
         // Taken from JQuery via https://stackoverflow.com/a/26915468
         const isHidden = node.style && node.style.display === 'none' || !node.ownerDocument.contains(node)
@@ -257,26 +279,16 @@ async function highlight(regex: RegExp) {
     );
     let nodes = [];
     let currentNode = treeWalker.nextNode();
-    let avoidNodeNames = ["svg", "script", "style", "noscript", "pre", "code"];
 
     while (currentNode) {
-        let text: any = currentNode.textContent
-        let isCandidate = true;
-        if (!text)
-            isCandidate = false;
-        // skip any links in svg, script, style tags
-        if (avoidNodeNames.includes(currentNode.nodeName.toLowerCase()))
-            isCandidate = false;
-        if ((currentNode as HTMLElement)?.classList?.value?.includes('alpaca_addr')) {
-            isCandidate = false;
-        }
-        if (isCandidate) {
-            nodes.push(currentNode);
-            currentNode = treeWalker.nextNode() as Node;
-        } else { // Skip over this node if it's a forbidden nodeName, or is not text
-            currentNode = treeWalker.nextSibling() as Node;
-        }
+        nodes.push(currentNode);
+        currentNode = treeWalker.nextNode() as Node;
     }
+    return nodes;
+}
+
+async function highlight(nodes: any) {
+    let avoidNodeNames = ["svg", "script", "style", "noscript", "pre", "code"];
 
     let spanNodes: HTMLSpanElement[] = [];
     if (!nodes.length)
@@ -284,7 +296,15 @@ async function highlight(regex: RegExp) {
 
     for (var i = 0; i < nodes.length; ++i) {
         let node = nodes[i];
-        let text: any = node.textContent;
+        let text: any = node.textContent
+        if (!text)
+            continue;
+        // skip any links in svg, script, style tags
+        if (avoidNodeNames.includes(node.nodeName.toLowerCase()))
+            continue;
+        if ((node as HTMLElement)?.classList?.value?.includes('alpaca_addr')) {
+            continue;
+        }
         // Don't recurse on self
         if ((node.textContent as string).includes('alpaca_addr')) {
             continue;
@@ -322,13 +342,26 @@ async function highlight(regex: RegExp) {
             spanNodes.push(spanNode)
         }
     }
+    return spanNodes;
+}
+
+function modifyNodes(spanNodes: HTMLSpanElement[]) {
     // Domains should be checked async after IPs because they require fetch
     // Should fire async as fast as it can go
     // Hopefully no race conditions as nodes are separate
-    for (let node of spanNodes) {
-        if (node.textContent) {
-            modify_page(node, node.textContent);
+
+    // Run 10 at a time in promises to prevent locking browser for pages with massive #'s of domains
+    const chunkSize = 100;
+    spanNodes = [...spanNodes];
+    for (let i = 0; i < spanNodes.length; i += chunkSize) {
+        const chunkNodes = spanNodes.slice(i, i + chunkSize);
+        let promises = []
+        for (let node of chunkNodes) {
+            if (node.textContent) {
+                promises.push(modify_page(node, node.textContent));
+            }     
         }
+        Promise.all(promises);
     }
 }
 
@@ -428,24 +461,7 @@ async function highlight_text(regex: RegExp) {
             spanNodes.push(spanNode)
         }
     }
-    // Domains should be checked async after IPs because they require fetch
-    // Should fire async as fast as it can go
-    // Hopefully no race conditions as nodes are separate
-
-    // Run 10 at a time in promises to prevent locking browser for pages with massive #'s of domains
-    const chunkSize = 10;
-    for (let i = 0; i < spanNodes.length; i += chunkSize) {
-        const chunkNodes = spanNodes.slice(i, i + chunkSize);
-        let promises = []
-        for (let node of chunkNodes) {
-            if (node.textContent) {
-                promises.push(modify_page(node, node.textContent));
-            }     
-        }
-        Promise.all(promises);
-    }
-
-
+    return spanNodes;
 }
 
 // This function exists so that you can see the response code of the URL
