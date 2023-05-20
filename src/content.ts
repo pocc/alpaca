@@ -27,18 +27,22 @@ browser.runtime.onMessage.addListener(
     function(request, _, sendResponse) {
         if (DEBUG)
             console.log("Alpaca|", "💬", "Received message from service_worker script", request)
-        if (!request.url && !request.event) {
-            console.log("Alpaca|", "💬", "Problem parsing request. Expecting url, event:", request)
-        }
-        const last_url = new URL(LAST_URL)
-        const req_url = new URL(request.url)
-        // If there's a new URL that hasn't been highlighted
-        if (last_url.origin !== req_url.origin || last_url.pathname !== req_url.pathname) {
-            LAST_URL = request.url
-            highlight(ADDR_REGEX)
-            sendResponse('Highlighting ' + request.url);
+        if (request.context = 'contextMenu') {
+            contextMenuRedirect(request.selectionText);
         } else {
-            sendResponse("Not highlighting")
+            if (!request.url && !request.event) {
+            console.log("Alpaca|", "💬", "Problem parsing request. Expecting url, event:", request)
+            }
+            const last_url = new URL(LAST_URL)
+            const req_url = new URL(request.url)
+            // If there's a new URL that hasn't been highlighted
+            if (last_url.origin !== req_url.origin || last_url.pathname !== req_url.pathname) {
+                LAST_URL = request.url
+                highlight(ADDR_REGEX)
+                sendResponse('Highlighting ' + request.url);
+            } else {
+                sendResponse("Not highlighting")
+            }
         }
         return true;
     }
@@ -46,7 +50,8 @@ browser.runtime.onMessage.addListener(
 
 // Taken from https://stackoverflow.com/questions/53497/regular-expression-that-matches-valid-ipv6-addresses
 const IPV4ADDR_RE  = /((?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\/?\d{0,2})/g
-const IPV6ADDR_RE = new RegExp('((?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(?::[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(?:ffff(?::0{1,4}){0,1}:){0,1}(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])|(?:[0-9a-fA-F]{1,4}:){1,4}:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\\/?\\d{0,2})', 'g')
+const IPV6ADDR_RE = new RegExp('[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}::?[0-9a-fA-F]{0,4}', 'g')
+const IP_RE = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source, 'g')
 // https://stackoverflow.com/questions/10306690/what-is-a-regular-expression-which-will-match-a-valid-domain-name-without-a-subd
 // test against https://github.com/bensooter/URLchecker/blob/master/top-1000-websites.txt
 
@@ -64,7 +69,28 @@ const URL_PATH_RE = /\/[a-zA-Z0-9._~!$&#?%*+,;=:@\/-]*/
 const DOMAIN_RE = new RegExp(SCHEME_RE.source + HOST_RE.source + PORT_RE.source + '(?:' + URL_PATH_RE.source + ')?', 'g')
 const DOMAIN_WITH_PATH_RE = new RegExp(SCHEME_RE.source + HOST_RE.source + PORT_RE.source + URL_PATH_RE.source, 'g')
 
-const ADDR_REGEX = new RegExp(IPV4ADDR_RE.source + '|' + IPV6ADDR_RE.source + '|' + DOMAIN_RE.source, 'g')
+const ADDR_REGEX = new RegExp(IP_RE.source + '|' + DOMAIN_RE.source, 'g')
+
+
+function contextMenuRedirect(selectionText: string) {
+    let addr = selectionText || 'no text selected';
+    addr = addr.trim();
+    let ipMatch = addr.match(IP_RE)
+    if (ipMatch) {
+        let ip = ipMatch[0];
+        window.open(`https://bgp.he.net/ip/${ip}#_ipinfo`, '_blank');
+        return;
+    }
+    let hostMatch = addr.match(DOMAIN_RE)
+    if (hostMatch) {
+        let host = hostMatch[0];
+        window.open(`https://bgp.he.net/dns/${host}`, '_blank');
+        return;
+    }
+    // If it's > 20 chars, add ... to signify that it's longer
+    let addrWithEllipses = addr.slice(0,20) + (addr.length>20 ? '...' : '')
+    alert(`Alpaca: Selected text "${addrWithEllipses}" does not match the hostname or IP regexes.`)
+}
 
 async function contentScriptMain() {
     console.time('alpaca');
@@ -118,14 +144,14 @@ function parseIP(ipAddr2Parse: string[], radix: number, bitsPerGroup: number, ma
     let ipNumAry = new Uint32Array(bitsPerAddress / 8)
     for (let i=0; i< ipGroupIntList.length; i++) {
         const ipGroupInt = ipGroupIntList[i];
-        if (maskSize >= bitsPerGroup) 
+        if (maskSize >= bitsPerGroup)
             ipNumAry[i] = ipGroupInt;
         else if (maskSize > 0)
             ipNumAry[i] = ipGroupInt & -Math.pow(2, bitsPerGroup - maskSize);
-        else 
+        else
             return ipNumAry;
         maskSize -= bitsPerGroup;
-    }    
+    }
     return ipNumAry;
 }
 
@@ -173,7 +199,7 @@ function getIPNumObj(ipAddr: string, maskSizeStr: string, IPver: IPversion): IPA
 
 // Takes in a str looking like 1.2.3.4 or 1.2.3.4/28 and a str looking like 1.2.3.4/28
 // This code is about ~2x faster for IPv6 than isInSubnet in https://github.com/beaugunderson/ip-address
-/* Tests: 
+/* Tests:
     IsIpInSupernet("2001:db8::ff00:42:8329", "2001:db8:0:0:0:ff00:0:0/95") => true
     IsIpInSupernet("2001:db8::ff0f:42:8329", "2001:db8:0:0:0:ff00:0:0/95") => false
     IsIpInSupernet("2001:db8::ff00:42:8329/73", "2001:db8:0:0:0:ff00:0:0/95") => false
@@ -231,35 +257,38 @@ async function highlight(regex: RegExp) {
     );
     let nodes = [];
     let currentNode = treeWalker.nextNode();
-        
+    let avoidNodeNames = ["svg", "script", "style", "noscript", "pre", "code"];
+
     while (currentNode) {
-        nodes.push(currentNode);
-        currentNode = treeWalker.nextNode() as Node;
+        let text: any = currentNode.textContent
+        let isCandidate = true;
+        if (!text)
+            isCandidate = false;
+        // skip any links in svg, script, style tags
+        if (avoidNodeNames.includes(currentNode.nodeName.toLowerCase()))
+            isCandidate = false;
+        if ((currentNode as HTMLElement)?.classList?.value?.includes('alpaca_addr')) {
+            isCandidate = false;
+        }
+        if (isCandidate) {
+            nodes.push(currentNode);
+            currentNode = treeWalker.nextNode() as Node;
+        } else { // Skip over this node if it's a forbidden nodeName, or is not text
+            currentNode = treeWalker.nextSibling() as Node;
+        }
     }
-    
+
     let spanNodes: HTMLSpanElement[] = [];
     if (!nodes.length)
         return;
 
     for (var i = 0; i < nodes.length; ++i) {
         let node = nodes[i];
-        let text = node.textContent
-        if (!text)
-            continue;
-
-        // skip any links in svg, script, style tags
-        const parentNode = node.parentNode;
-        if (parentNode) {
-            if (["svg", "script", "style", "noscript", "pre", "code"].includes(parentNode.nodeName.toLowerCase()))
-                break;
-            // Don't recurse on self
-            if ((parentNode as HTMLElement).classList.value.includes('alpaca_addr')) {
-                continue;
-            }
-        }
+        let text: any = node.textContent;
+        // Don't recurse on self
         if ((node.textContent as string).includes('alpaca_addr')) {
             continue;
-        }
+        }    
 
         let matches = [... text.matchAll(ADDR_REGEX)]
         let offset = 0;
@@ -272,22 +301,24 @@ async function highlight(regex: RegExp) {
                     continue;
                 }
             }
-            // Executive decision that IPv6 addresses less than 6 characters like :: and ::1 aren't interesting 
-            if (match[0].match(IPV6ADDR_RE) && match[0].length < 6) {
+            let matchStr = match[0]
+            // Executive decision that IPv6 addresses less than 6 characters like :: and ::1 aren't interesting
+            if (matchStr.match(IPV6ADDR_RE) && matchStr.length < 6) {
                 continue;
             }
             let range = document.createRange();
             range.setStart(node, index);
-            range.setEnd(node, index + match[0].length);
-            
-            let spanNode = document.createElement("button");
+            range.setEnd(node, index + matchStr.length);
+
+            let spanNode = document.createElement("span");
             spanNode.className = "alpaca_addr";
+            spanNode.id = `alpaca_${host_match}_${i}`; // Add number to the end to make it unique
             spanNode.appendChild(range.extractContents());
             range.insertNode(spanNode);
             if (!spanNode.nextSibling)
                 continue;
             node = spanNode.nextSibling;
-            offset += index + match[0].length;
+            offset += index + matchStr.length;
             spanNodes.push(spanNode)
         }
     }
@@ -323,7 +354,7 @@ async function highlight_text(regex: RegExp) {
     let nodes = [];
     let text = '';
     let currentNode = treeWalker.nextNode();
-        
+
     while (currentNode) {
         nodes.push({
             textNode: currentNode,
@@ -332,7 +363,7 @@ async function highlight_text(regex: RegExp) {
         text += currentNode.nodeValue
         currentNode = treeWalker.nextNode() as Node;
     }
-    
+
     if (!nodes.length)
         return;
 
@@ -340,14 +371,14 @@ async function highlight_text(regex: RegExp) {
     let spanNodes = [];
     while (match = regex.exec(text)) {
         const matchLength = match[0].length;
-        
-        // Prevent empty matches causing infinite loops        
+
+        // Prevent empty matches causing infinite loops
         if (!matchLength)
         {
             regex.lastIndex++;
             continue;
         }
-        
+
         for (var i = 0; i < nodes.length; ++i) {
             let node = nodes[i];
             const nodeLength = (node.textNode.nodeValue as string).length;
@@ -355,11 +386,11 @@ async function highlight_text(regex: RegExp) {
             // Skip nodes before the match
             if (node.start + nodeLength <= match.index)
                 continue;
-        
+
             // Break after the match
             if (node.start >= match.index + matchLength)
                 break;
-            
+
             // Split the start node if required
             if (node.start < match.index) {
                 nodes.splice(i + 1, 0, {
@@ -368,7 +399,7 @@ async function highlight_text(regex: RegExp) {
                 });
                 continue;
             }
-            
+
             // Split the end node if required
             if (node.start + nodeLength > match.index + matchLength) {
                 nodes.splice(i + 1, 0, {
@@ -380,13 +411,13 @@ async function highlight_text(regex: RegExp) {
             const addr = node.textNode.textContent as string;
 
             // Only mark domains that match the PSL
-            let host_addr = addr.match(HOST_RE) 
+            let host_addr = addr.match(HOST_RE)
             if (host_addr) {
                 if (!is_domain_valid(host_addr[0])) {
                     continue;
                 }
             }
-            
+
             // Highlight the current node
             // Highlight IPv4 and IPv6 immediately because no fetches are required
             const spanNode = document.createElement("span");
@@ -400,11 +431,21 @@ async function highlight_text(regex: RegExp) {
     // Domains should be checked async after IPs because they require fetch
     // Should fire async as fast as it can go
     // Hopefully no race conditions as nodes are separate
-    for (let node of spanNodes) {
-        if (node.textContent) {
-            modify_page(node, node.textContent);
+
+    // Run 10 at a time in promises to prevent locking browser for pages with massive #'s of domains
+    const chunkSize = 10;
+    for (let i = 0; i < spanNodes.length; i += chunkSize) {
+        const chunkNodes = spanNodes.slice(i, i + chunkSize);
+        let promises = []
+        for (let node of chunkNodes) {
+            if (node.textContent) {
+                promises.push(modify_page(node, node.textContent));
+            }     
         }
+        Promise.all(promises);
     }
+
+
 }
 
 // This function exists so that you can see the response code of the URL

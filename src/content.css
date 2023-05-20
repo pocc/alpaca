@@ -6,6 +6,10 @@
 
     padding: 1px 4px;
     text-shadow: 0px 1px #eee;
+
+    /* Select text on click https://stackoverflow.com/questions/11451353/how-to-select-the-text-of-a-span-on-click */
+    user-select: all; 
+    cursor: pointer;
 }
 .alpaca_cloudflare {
     border:1px solid #FC7E2E;

@@ -23,7 +23,7 @@
         }
     ],
     "manifest_version": 3,
-    "permissions": ["activeTab"],
+    "permissions": ["activeTab", "contextMenus"],
     "author": "Ross Jacobs",
     "name": "Alpaca",
     "description": "Highlight IPs and domains with useful information",
